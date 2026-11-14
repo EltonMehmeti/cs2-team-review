@@ -99,6 +99,9 @@ knife round or a restart that was counted as a real round.
 | `python -m cs2review.digest --pretty` | the compact match summary an AI reads (latest match) |
 | `python -m cs2review.report --provider manual` | an AI match report; manual mode writes a prompt you paste into any chat app |
 | `python -m cs2review.report --post` | write the report with the Claude API and post it to Discord |
+| `python -m cs2review.trends --map de_mirage --last 10` | our trends across matches (rates need 8+ rounds) |
+| `python -m cs2review.trends --report --post` | a short weekly trend summary by the AI, posted to Discord |
+| `python -m cs2review.ask "who trades worst?"` | ask a question in plain words (needs `ANTHROPIC_API_KEY`) |
 | `python -m cs2review.debug_rounds X` | show the raw round events of a demo |
 
 ## Words used in the database

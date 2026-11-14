@@ -181,6 +181,23 @@ def test_full_pipeline_on_public_demo():
             "practice": "trade",
         }
         assert validate_report(json.dumps(answer), lengths)[1] == []
+
+        # ---- Phase 5: trends and the evaluation SQL on real data ---------------
+        from cs2review.ask import run_sql
+        from cs2review.trends import compute_trends
+        trends = compute_trends(engine, "de_mirage")
+        t_side = trends["maps"]["de_mirage"]["sides"]["T"]
+        assert t_side["rounds"] == {"won": 7, "n": 9, "pct": 78}
+        assert t_side["opening_duels"] == {"won": 8, "n": 9, "pct": 89}
+        assert t_side["trades"] == {"won": 5, "n": 22, "pct": 23}
+        assert t_side["after_5v4_up"] == {"won": 7, "n": 8, "pct": 88}
+        db_file = Path(tmp) / "test.sqlite"
+        assert run_sql(db_file, "SELECT COUNT(*) FROM our_rounds")["rows"] == [[9]]
+        assert "error" in run_sql(db_file, "DELETE FROM kills")
+        sys.path.insert(0, str(Path(__file__).parent))
+        from eval_ask import expected_value, load_questions
+        for q in load_questions():
+            assert expected_value(db_file, q["sql"]) is not None, q["id"]
         engine.dispose()
 
 

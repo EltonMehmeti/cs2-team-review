@@ -6,8 +6,9 @@ finds the team's recurring mistakes, tracks the plays the team runs, and
 suggests new plays with examples.
 
 This document is written for the agent (or person) who implements the rest.
-Phases 1 to 3 are built and tested; Phase 4 is built and waits for the owner's
-key, webhook and checks. Phases 1.5 and 5 to 9 are specified below.
+Phases 1 to 3 are built and tested; Phases 4 and 5 are built and wait for the
+owner's key, webhook, real matches and checks. Phases 1.5 and 6 to 9 are
+specified below.
 
 | Phase | What | Status |
 |---|---|---|
@@ -16,7 +17,7 @@ key, webhook and checks. Phases 1.5 and 5 to 9 are specified below.
 | 2 | Team metrics and round flags (no AI) | Done, tested on the public demo |
 | 3 | Round summaries and match digest (the AI's input) | Done, tested on the public demo |
 | 4 | Match report written by an LLM, posted to Discord | Built and tested with a fake model; needs the owner (see Phase 4) |
-| 5 | Trends across matches and a question-answering agent | To do |
+| 5 | Trends across matches and a question-answering agent | Built and tested with a fake model; needs real matches and a key |
 | 6 | Play detection: which plays the team runs | To do |
 | 7 | Playbook from opponents and pro demos, with lineups | To do |
 | 8 | Web scout: recent plays from articles and videos | To do |
@@ -121,12 +122,18 @@ cs2review/
   llm.py           Phase 4: the only module that talks to a model (anthropic, manual, fake)
   report.py        Phase 4: CLI: match report, checked and rendered by code
   notify.py        Phase 4: post to a Discord webhook
+  trends.py        Phase 5: CLI: trends across matches (MIN_N honesty rule)
+  trend_report.py  Phase 5: weekly trend report by the LLM, evidence checked by code
+  ask.py           Phase 5: CLI: question agent with a read-only run_sql tool
   prompts/         prompt text files
 tests/
   test_rounds.py        unit tests, no demo needed
   test_metrics.py       Phase 2 unit tests, no demo needed
   test_summaries.py     Phase 3 unit tests, no demo needed
   test_report.py        Phase 4 unit tests, fake model, no network
+  test_trends_ask.py    Phase 5 unit tests on a synthetic database (fixtures.py)
+  eval_questions.yaml   Phase 5: 10 questions with SQL answers
+  eval_ask.py           Phase 5: run the agent on them (real model, not in the suite)
   test_integration.py   end-to-end test on a public demo (skips if missing)
 ```
 
@@ -328,7 +335,8 @@ every table change.
 | `round_summaries` | played round: compact JSON from our point of view (Phase 3) |
 | `match_digests` | match: the digest JSON and its token estimate (Phase 3) |
 | `llm_calls` | every model call: provider, model, purpose, tokens, cost (Phase 4) |
-| `reports` | match report: JSON from the model, rendered Markdown, tokens, cost (Phase 4) |
+| `reports` | match or trend report (`kind`): model JSON, rendered Markdown, tokens, cost (Phase 4, 5) |
+| `our_rounds`, `our_player_rounds`, `our_kills` | views: only our team (Phase 5) |
 | `meta` | `schema_version` |
 
 ---
@@ -743,6 +751,38 @@ A script runs the agent and compares the numbers. Target: 8 of 10.
 **Done when.** Trends print for a map with real data; the evaluation
 reaches the target; a destructive query (`DROP TABLE`, `DELETE`) is refused,
 with a test proving it.
+
+**What was built (Phase 5, 2026-11-14).** The refusal of destructive
+queries is proven by tests (word check and, separately, the read-only
+connection). Trends print for the public test demo and for a synthetic
+3-match database in the tests (`tests/fixtures.py`). Still open: trends on
+the owner's real matches, and running `python tests/eval_ask.py` with an API
+key to measure the 8-of-10 target (record the score and model here).
+Decisions:
+
+- Views `our_rounds`, `our_player_rounds` and `our_kills` (with `by_us` /
+  `of_us`) are created by `get_engine`; schema version 5. `--last N` orders
+  matches by `matches.file_time` (the demo has no date), then ingest time.
+- `MIN_N = 8`: a rate from fewer rounds prints "not enough data (n=5)" and
+  has `pct: null` in the JSON. n is always shown.
+- "5v4 up" / "4v5 down" use only rounds where both teams started with five
+  players. Pistol conversion counts the next two rounds on the same side.
+- The weekly trend report (`trends --report`) cannot cite rounds, so each
+  claim cites evidence paths into the trend data (`de_mirage.T.trades`). The
+  code checks every path exists and has n >= 8, and prints the numbers
+  itself; the model is told not to write numbers. Stored in `reports` with
+  `kind = 'trends'`.
+- `run_sql`: one statement, must start with SELECT or WITH, a list of
+  writing keywords is refused with a clear message, `LIMIT 200` is added
+  when missing, and the connection is opened with `mode=ro` plus
+  `PRAGMA query_only`, so SQLite itself refuses writes. A progress handler
+  stops queries after 5 seconds. Results over 20,000 characters are cut.
+- The agent gets the schema in its system prompt (saves a tool call) and
+  may still call `describe_schema`. At most 8 tool calls: after the 8th the
+  model is told to answer; if it asks for tools again the loop stops.
+- The evaluation compares numbers in the answer (percentages may be off
+  by 1) or the expected player name. The default model is Claude Haiku
+  5.5; if it misses the target, try a stronger model and record it here.
 
 ### Phase 6: play detection
 

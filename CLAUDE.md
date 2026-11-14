@@ -10,8 +10,9 @@ A post-match review tool for one five-player CS2 team on FACEIT. It parses
 demo files into SQLite, computes team metrics, and uses an LLM to write
 reports and suggest plays. Phases 1 (demo -> SQLite + self-check), 2 (team
 metrics and round flags) and 3 (round summaries and match digest) are done.
-Phase 4 (LLM match report) is built and waits for the owner's API key and
-webhook. Phase 1.5 waits for the owner's FACEIT demos.
+Phases 4 (LLM match report) and 5 (trends and question agent) are built and
+wait for the owner's API key, webhook and real matches. Phase 1.5 waits for
+the owner's FACEIT demos.
 
 ## Hard rules
 
@@ -34,11 +35,15 @@ python -m cs2review.metrics --rebuild   # recompute Phase 2 metrics (ingest does
 python -m cs2review.metrics --buy-histogram   # tune buy-type thresholds
 python -m cs2review.digest MATCH_ID --pretty  # the JSON the LLM reads
 python -m cs2review.report MATCH_ID --provider manual [--post]  # LLM match report
+python -m cs2review.trends --map de_mirage --last 10 [--report]  # trends across matches
+python -m cs2review.ask "question"      # question agent (needs ANTHROPIC_API_KEY)
+python tests/eval_ask.py                # agent evaluation (real model, ~1 cent)
 python -m cs2review.debug_rounds X.dem  # raw round events of one demo
 python tests/test_rounds.py             # unit tests (no demo needed)
 python tests/test_metrics.py            # Phase 2 unit tests (no demo needed)
 python tests/test_summaries.py          # Phase 3 unit tests (no demo needed)
 python tests/test_report.py             # Phase 4 unit tests (fake model, no network)
+python tests/test_trends_ask.py         # Phase 5 unit tests (synthetic database)
 python tests/test_integration.py        # end-to-end (needs tests/data/test_demo.dem)
 ```
 
@@ -84,6 +89,10 @@ cs2review/digest.py        CLI: print or save a match digest
 cs2review/llm.py           the only module that calls a model (anthropic, manual, fake)
 cs2review/report.py        CLI: LLM match report, validated and rendered by code
 cs2review/notify.py        post to a Discord webhook
+cs2review/trends.py        CLI: trends across matches
+cs2review/trend_report.py  weekly trend report (LLM, evidence paths checked)
+cs2review/ask.py           CLI: question agent, read-only run_sql
 cs2review/prompts/         prompt text files (never put prompts inside functions)
+tests/fixtures.py          synthetic 3-match database for tests
 cs2review/debug_rounds.py  CLI: raw round events
 ```

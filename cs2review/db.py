@@ -23,7 +23,9 @@ from . import places
 # table). Version 2 added the Phase 2 metrics: team_rounds, player_round_stats
 # and five new columns on kills. Version 3 added round_summaries and
 # match_digests (Phase 3). Version 4 added llm_calls and reports (Phase 4).
-SCHEMA_VERSION = 4
+# Version 5 added the views our_rounds, our_player_rounds, our_kills and
+# reports.kind (Phase 5).
+SCHEMA_VERSION = 5
 
 
 class SchemaMismatchError(RuntimeError):
@@ -399,7 +401,8 @@ class Report(Base):
 
     __tablename__ = "reports"
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    match_id: Mapped[str] = mapped_column(String, index=True)
+    kind: Mapped[str] = mapped_column(String, default="match")  # "match" or "trends" (Phase 5)
+    match_id: Mapped[str] = mapped_column(String, index=True)  # for trends: "trends:<map>:<last>"
     created_at: Mapped[str] = mapped_column(String)
     provider: Mapped[str] = mapped_column(String)
     model: Mapped[str] = mapped_column(String)
@@ -427,6 +430,31 @@ MATCH_MODELS = [Match, Player, Round, PlayerRound, Kill, Damage, Grenade, Blind,
 # tables computed from the ones above by metrics.py and summaries.py
 # (deleted with the match too, and rebuilt after every ingest)
 METRIC_MODELS = [TeamRound, PlayerRoundStat, RoundSummary, MatchDigest]
+
+
+# SQL views for trends and the question agent (Phase 5): only the owner's team.
+# matches.file_time stands in for the match date (the demo has no date).
+VIEWS = {
+    "our_rounds": """
+        SELECT tr.*, m.map, m.file_time
+        FROM team_rounds tr JOIN matches m ON m.match_id = tr.match_id
+        WHERE tr.is_us = 1""",
+    "our_player_rounds": """
+        SELECT s.*, p.name, m.map, m.file_time
+        FROM player_round_stats s
+        JOIN players p ON p.match_id = s.match_id AND p.steamid = s.steamid
+        JOIN matches m ON m.match_id = s.match_id
+        WHERE p.is_us = 1""",
+    # every kill in played rounds; by_us / of_us say whether we killed or died
+    "our_kills": """
+        SELECT k.*, m.map, m.file_time,
+               (k.attacker_side = CASE WHEN r.t_team = m.us_team THEN 'T' ELSE 'CT' END) AS by_us,
+               (k.victim_side = CASE WHEN r.t_team = m.us_team THEN 'T' ELSE 'CT' END) AS of_us
+        FROM kills k
+        JOIN matches m ON m.match_id = k.match_id
+        JOIN rounds r ON r.match_id = k.match_id AND r.round = k.round
+        WHERE m.us_team IS NOT NULL AND r.played = 1""",
+}
 
 
 def get_engine(db_path: str | Path) -> Engine:
@@ -457,8 +485,10 @@ def get_engine(db_path: str | Path) -> Engine:
                 "and run `python -m cs2review.ingest` again."
             )
     Base.metadata.create_all(engine)
-    if not existing:
-        with engine.begin() as conn:
+    with engine.begin() as conn:
+        for name, sql in VIEWS.items():
+            conn.exec_driver_sql(f"CREATE VIEW IF NOT EXISTS {name} AS {sql}")
+        if not existing:
             conn.execute(Meta.__table__.insert().values(key="schema_version", value=str(SCHEMA_VERSION)))
     return engine
 

@@ -1,0 +1,60 @@
+# Evaluation of the question agent (PLAN.md, Phase 5). The correct answer to
+# each question is computed by the SQL here, on whatever database you run it
+# against; the agent passes when its answer contains that value.
+#   kind: number  -> the number must appear (percentages may be off by 1)
+#   kind: name    -> the player's name must appear
+# Run:  python tests/eval_ask.py        (needs ANTHROPIC_API_KEY; costs about a cent)
+# Target: 8 of 10.
+
+- id: t_win_rate
+  question: What is our round win rate on the T side, in percent?
+  kind: number
+  sql: SELECT ROUND(100.0 * AVG(won)) FROM our_rounds WHERE side = 'T'
+
+- id: rounds_played
+  question: How many rounds have we played in total?
+  kind: number
+  sql: SELECT COUNT(*) FROM our_rounds
+
+- id: opening_duels_won
+  question: How many opening duels did we win in total?
+  kind: number
+  sql: SELECT COUNT(*) FROM our_rounds WHERE opening = 'won'
+
+- id: most_untraded
+  question: Which of our players has the most untraded deaths (killed by an enemy and not traded)?
+  kind: name
+  sql: |
+    SELECT p.name FROM our_kills k JOIN players p ON p.match_id = k.match_id AND p.steamid = k.victim_steamid
+    WHERE k.of_us = 1 AND k.after_round_end = 0 AND k.is_suicide = 0 AND k.is_teamkill = 0 AND k.was_traded = 0
+    GROUP BY p.name ORDER BY COUNT(*) DESC, p.name LIMIT 1
+
+- id: trade_rate
+  question: What share of our deaths to an enemy did a teammate trade, in percent?
+  kind: number
+  sql: SELECT ROUND(100.0 * SUM(traded_deaths) / (SUM(traded_deaths) + SUM(untraded_deaths))) FROM our_rounds
+
+- id: best_kast
+  question: Which of our players has the highest KAST?
+  kind: name
+  sql: SELECT name FROM our_player_rounds GROUP BY steamid ORDER BY AVG(kast) DESC, SUM(kills) DESC, name LIMIT 1
+
+- id: team_flash_rounds
+  question: In how many rounds did we blind one of our own teammates with a flash for a second or more?
+  kind: number
+  sql: SELECT COUNT(*) FROM our_rounds WHERE teammates_blinded > 0
+
+- id: full_buy_win_rate
+  question: What is our win rate in rounds where we had a full buy, in percent?
+  kind: number
+  sql: SELECT ROUND(100.0 * AVG(won)) FROM our_rounds WHERE buy_type = 'full'
+
+- id: postplant_wins
+  question: How many rounds did we win on the T side after planting the bomb?
+  kind: number
+  sql: SELECT COUNT(*) FROM our_rounds WHERE side = 'T' AND planted = 1 AND won = 1
+
+- id: most_opening_kills
+  question: Which of our players got the most opening kills?
+  kind: name
+  sql: SELECT name FROM our_player_rounds GROUP BY steamid ORDER BY SUM(opening_kill) DESC, name LIMIT 1

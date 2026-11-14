@@ -250,6 +250,7 @@ def write_report(engine: Engine, match_id: str, llm: LLM) -> dict:
     md = render_markdown(report, digest, str(match["file_name"]), freeze_ticks, int(match["tick_rate"]), llm.model)
 
     row = {
+        "kind": "match",
         "match_id": match_id,
         "created_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "provider": llm.provider_name,

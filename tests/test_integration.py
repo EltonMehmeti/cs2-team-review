@@ -62,6 +62,7 @@ def test_full_pipeline_on_public_demo():
     from cs2review.db import get_engine, load_place_cells, save_match
     from cs2review.metrics import build_match_metrics, check_invariants, load_tables
     from cs2review.parse import parse_demo
+    from cs2review.summaries import Digest, build_digest, to_json
 
     tables = parse_demo(DEMO, team_steam_ids=sorted(TEAM_A), match_id="public_test")
 
@@ -145,6 +146,26 @@ def test_full_pipeline_on_public_demo():
 
         report = format_report(engine, "public_test")
         assert "KAST and opening duels" in report and "team A won 8 of 9 opening duels" in report
+
+        # ---- Phase 3: the digest ------------------------------------------------
+        digest, tokens = build_digest(engine, "public_test")
+        again, tokens_again = build_digest(engine, "public_test")
+        assert to_json(digest) == to_json(again) and tokens == tokens_again  # deterministic
+        Digest.model_validate(digest)
+        assert tokens < 10_000 and "dropped" not in digest
+        assert digest["match"]["final_score"] == "8-2" and len(digest["rounds"]) == 9
+        assert digest["team"]["opening_duels"] == {"won": 8, "n": 9, "pct": 89}
+        assert digest["team"]["trade_rate"] == {"won": 5, "n": 22, "pct": 23}
+        assert sum(p["k"] for p in digest["players"]) == 41  # team A's kills on the scoreboard
+        r2 = digest["rounds"][1]
+        assert r2["result"] == {"won": False, "how": "bomb_defused", "length_s": 70, "alive": "0v2", "clutch": "123 1v2"}
+        assert r2["bomb"] == {"site": "A", "t": 41, "by": "Подсосник blick'a", "alive": "2v2", "outcome": "defused"}
+        assert r2["kills"][0]["opening"] and r2["kills"][0]["traded"] is False
+        with engine.connect() as conn:
+            from sqlalchemy import text
+            stored = conn.execute(text("SELECT COUNT(*) FROM round_summaries WHERE match_id = 'public_test'")).scalar_one()
+            stored_digest = conn.execute(text("SELECT json FROM match_digests WHERE match_id = 'public_test'")).scalar_one()
+        assert stored == 9 and stored_digest == to_json(digest)
         engine.dispose()
 
 

@@ -23,6 +23,7 @@ from .config import load_config
 from .db import SchemaMismatchError, get_engine, has_match, load_place_cells, save_match
 from .metrics import build_match_metrics
 from .parse import parse_demo
+from .summaries import build_digest
 from .unpack import is_demo_file, match_id_for, unpack_demo
 
 
@@ -56,13 +57,14 @@ def ingest_file(src: Path, engine, cfg, force: bool = False) -> str:
     )
     save_match(engine, tables)
     build_match_metrics(engine, match_id, cfg.buy_types)  # Phase 2: team_rounds, player_round_stats
+    _, tokens = build_digest(engine, match_id)  # Phase 3: round_summaries, match_digests
 
     m = tables["matches"].iloc[0]
     ok, findings = check_match(engine, match_id)
     print(
         f"ok     {src.name}: {m['map']}, team A {m['score_a']} : {m['score_b']} team B, "
         f"{len(tables['kills'])} kills, {len(tables['grenades'])} grenades, "
-        f"{time.time() - started:.1f}s"
+        f"digest ~{tokens} tokens, {time.time() - started:.1f}s"
     )
     if cfg.team_steam_ids and m["us_team"] is None:
         print("       note: none of your team_steam_ids played in this match")

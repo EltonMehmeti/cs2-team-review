@@ -8,9 +8,9 @@ parser. This file is the short version of how to work here.
 
 A post-match review tool for one five-player CS2 team on FACEIT. It parses
 demo files into SQLite, computes team metrics, and uses an LLM to write
-reports and suggest plays. Phase 1 (demo -> SQLite + self-check) and Phase 2
-(team metrics and round flags) are done. Phase 1.5 waits for the owner's
-FACEIT demos.
+reports and suggest plays. Phases 1 (demo -> SQLite + self-check), 2 (team
+metrics and round flags) and 3 (round summaries and match digest) are done.
+Phase 1.5 waits for the owner's FACEIT demos.
 
 ## Hard rules
 
@@ -31,9 +31,11 @@ python -m cs2review.ingest              # demos in inbox/ -> data/cs2review.sqli
 python -m cs2review.check --all         # self-check of every match
 python -m cs2review.metrics --rebuild   # recompute Phase 2 metrics (ingest does it too)
 python -m cs2review.metrics --buy-histogram   # tune buy-type thresholds
+python -m cs2review.digest MATCH_ID --pretty  # the JSON the LLM reads
 python -m cs2review.debug_rounds X.dem  # raw round events of one demo
 python tests/test_rounds.py             # unit tests (no demo needed)
 python tests/test_metrics.py            # Phase 2 unit tests (no demo needed)
+python tests/test_summaries.py          # Phase 3 unit tests (no demo needed)
 python tests/test_integration.py        # end-to-end (needs tests/data/test_demo.dem)
 ```
 
@@ -73,5 +75,7 @@ cs2review/db.py            SQLAlchemy models, SCHEMA_VERSION, save/load helpers
 cs2review/ingest.py        CLI
 cs2review/check.py         CLI: scoreboard, self-check, KAST and opening duels
 cs2review/metrics.py       Phase 2: team_rounds, player_round_stats, kill flags
+cs2review/summaries.py     Phase 3: round summaries, match digest, pydantic models
+cs2review/digest.py        CLI: print or save a match digest
 cs2review/debug_rounds.py  CLI: raw round events
 ```

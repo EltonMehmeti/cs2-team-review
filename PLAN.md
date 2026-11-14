@@ -6,14 +6,14 @@ finds the team's recurring mistakes, tracks the plays the team runs, and
 suggests new plays with examples.
 
 This document is written for the agent (or person) who implements the rest.
-Phases 1 and 2 are built and tested. Phases 1.5 and 3 to 9 are specified below.
+Phases 1 to 3 are built and tested. Phases 1.5 and 4 to 9 are specified below.
 
 | Phase | What | Status |
 |---|---|---|
 | 1 | Demo files in, SQLite tables out, self-check | Done, tested |
 | 1.5 | Validate on the owner's real FACEIT demos, on Windows | To do (needs the owner's PC and demos) |
 | 2 | Team metrics and round flags (no AI) | Done, tested on the public demo |
-| 3 | Round summaries and match digest (the AI's input) | To do |
+| 3 | Round summaries and match digest (the AI's input) | Done, tested on the public demo |
 | 4 | Match report written by an LLM, posted to Discord | To do |
 | 5 | Trends across matches and a question-answering agent | To do |
 | 6 | Play detection: which plays the team runs | To do |
@@ -115,9 +115,12 @@ cs2review/
   check.py         CLI: scoreboard + self-check against the demo's own totals
   debug_rounds.py  CLI: print the raw round events of a demo
   metrics.py       Phase 2: team_rounds, player_round_stats, kill columns
+  summaries.py     Phase 3: round summaries, match digest, pydantic models
+  digest.py        CLI: print or save the digest of a match
 tests/
   test_rounds.py        unit tests, no demo needed
   test_metrics.py       Phase 2 unit tests, no demo needed
+  test_summaries.py     Phase 3 unit tests, no demo needed
   test_integration.py   end-to-end test on a public demo (skips if missing)
 ```
 
@@ -316,6 +319,8 @@ every table change.
 | `map_places` | grid cell per map: area name (grows with every demo) |
 | `team_rounds` | team per played round: buy, opening, trades, advantage, clutch, utility, plant, flags (Phase 2) |
 | `player_round_stats` | player per played round: K, D, A, damage, KAST, openings, trades (Phase 2) |
+| `round_summaries` | played round: compact JSON from our point of view (Phase 3) |
+| `match_digests` | match: the digest JSON and its token estimate (Phase 3) |
 | `meta` | `schema_version` |
 
 ---
@@ -551,6 +556,35 @@ and the digest in `match_digests` (`match_id, json, token_estimate`).
 **Done when.** Digest for the test demo is valid against a pydantic model,
 under budget, and identical on two runs. A unit test builds a summary from a
 hand-made round and compares it with an expected JSON.
+
+**What was built and measured (Phase 3, 2026-11-14).** All "Done when"
+items hold. The test demo's digest is about 4,800 tokens for 9 rounds, so a
+full 24-round match should land near 11,000 to 12,000 tokens before
+dropping fields; the drop steps exist for that and are unit-tested. Ingest
+builds the digest for every match (schema version 3), and
+`python -m cs2review.digest MATCH_ID --pretty` prints it. Decisions:
+
+- The digest is built with fixed key order and `json.dumps(...,
+  separators=(",", ":"))`, so it is byte-for-byte the same on every run.
+- `kills` in a round summary leave out kills after the round ended (they
+  change nothing about the round). Player K/D/A in `players` still count
+  like the scoreboard.
+- An enemy keeps his name ("enemy Xavi") once he has 3 or more opening
+  kills in the match (`NAMED_ENEMY_MIN_OPENINGS`). Dropping "enemy details"
+  turns those back into "enemy" and removes `enemy_utility`.
+- A kill carries `traded` for every one of our deaths to an enemy (true or
+  false) and for enemy deaths only when true; `trade: true` marks our kill
+  that avenged a teammate. `killer: "world"` is the bomb, a fall or the map.
+- Flashes keep `enemies_blinded` even when 0 (a wasted flash is worth
+  knowing); `mates_blinded` appears only when above 0. Only smokes keep
+  `from`. Decoys are left out.
+- `setup_20s` is left out when the round lasted less than 20 seconds.
+- `result.clutch` names our clutch player ("Ann 1v3"); an enemy clutch shows
+  only when we had none ("enemy 1v2").
+- Rates are `{"won", "n", "pct"}` so the model never divides.
+  `trade_rate.n` counts only deaths to an enemy.
+- `match.date` stays empty: the demo has no date (Phase 10 can add it from
+  the FACEIT API).
 
 ### Phase 4: the match report
 

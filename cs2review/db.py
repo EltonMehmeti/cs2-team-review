@@ -21,8 +21,9 @@ from . import places
 
 # Bump this whenever a table or column changes. Version 1 was Phase 1 (no meta
 # table). Version 2 added the Phase 2 metrics: team_rounds, player_round_stats
-# and five new columns on kills.
-SCHEMA_VERSION = 2
+# and five new columns on kills. Version 3 added round_summaries and
+# match_digests (Phase 3).
+SCHEMA_VERSION = 3
 
 
 class SchemaMismatchError(RuntimeError):
@@ -358,6 +359,24 @@ class PlayerRoundStat(Base):
     utility_damage: Mapped[int] = mapped_column(Integer)
 
 
+class RoundSummary(Base):
+    """One played round as compact JSON, from our point of view (summaries.py)."""
+
+    __tablename__ = "round_summaries"
+    match_id: Mapped[str] = mapped_column(String, primary_key=True)
+    round: Mapped[int] = mapped_column(Integer, primary_key=True)
+    json: Mapped[str] = mapped_column(Text)
+
+
+class MatchDigest(Base):
+    """The whole match as one JSON document: what the LLM reads (summaries.py)."""
+
+    __tablename__ = "match_digests"
+    match_id: Mapped[str] = mapped_column(String, primary_key=True)
+    json: Mapped[str] = mapped_column(Text)
+    token_estimate: Mapped[int] = mapped_column(Integer)  # characters / 4
+
+
 class MapPlace(Base):
     """Grid of known area names per map (shared by all matches)."""
 
@@ -372,8 +391,9 @@ class MapPlace(Base):
 
 # tables that hold rows of a single match, in the order they are written
 MATCH_MODELS = [Match, Player, Round, PlayerRound, Kill, Damage, Grenade, Blind, BombEvent, Position]
-# tables computed from the ones above by metrics.py (deleted with the match too)
-METRIC_MODELS = [TeamRound, PlayerRoundStat]
+# tables computed from the ones above by metrics.py and summaries.py
+# (deleted with the match too, and rebuilt after every ingest)
+METRIC_MODELS = [TeamRound, PlayerRoundStat, RoundSummary, MatchDigest]
 
 
 def get_engine(db_path: str | Path) -> Engine:

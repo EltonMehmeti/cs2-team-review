@@ -77,6 +77,7 @@ knife round or a restart that was counted as a real round.
 | `python -m cs2review.check --list` | list stored matches |
 | `python -m cs2review.metrics --rebuild` | recompute the team stats (ingest already does this) |
 | `python -m cs2review.metrics --buy-histogram` | see how team buys fall into eco / semi / full |
+| `python -m cs2review.digest --pretty` | the compact match summary an AI reads (latest match) |
 | `python -m cs2review.debug_rounds X` | show the raw round events of a demo |
 
 ## Words used in the database
@@ -100,7 +101,8 @@ knife round or a restart that was counted as a real round.
 `kills`, `damages`, `grenades`, `blinds`, `bomb_events`, `positions` (every
 living player once per second), `map_places`, and the team stats:
 `team_rounds` (one row per team per round) and `player_round_stats` (one row
-per player per round). Every column is described in `cs2review/db.py`.
+per player per round), plus `round_summaries` and `match_digests` (the
+compact JSON an AI reads). Every column is described in `cs2review/db.py`.
 
 Some example questions you can already ask with SQL:
 

@@ -50,6 +50,25 @@ playing.
 The database is the file `data/cs2review.sqlite`. Open it with any SQLite
 viewer, for example "DB Browser for SQLite".
 
+## AI match report (optional)
+
+The report is written by a language model from the compact summary, then
+checked by the code: every round it cites must exist, every problem needs
+two rounds as evidence, and the numbers all come from the demo.
+
+- **Free, by hand:** `python -m cs2review.report --provider manual` writes
+  `out/prompt_<match>.md`. Paste it into any chat app, save the JSON answer
+  as `out/answer_<match>.json`, and run the command again.
+- **Automatic:** set the environment variable `ANTHROPIC_API_KEY` to your
+  Claude API key and run `python -m cs2review.report`. With the default
+  model (Claude Haiku 5.5) a report costs well under one cent; every call is
+  logged in the `llm_calls` table and each run stops at
+  `max_cost_usd_per_run` (see `[llm]` in `config.example.toml`).
+- **Discord:** set `DISCORD_WEBHOOK_URL` to your channel's webhook URL and
+  add `--post`.
+
+Keys go in environment variables, never in `config.toml` or the code.
+
 ## What "check OK" means
 
 The demo contains the game's own final scoreboard. The tool rebuilds kills,
@@ -78,6 +97,8 @@ knife round or a restart that was counted as a real round.
 | `python -m cs2review.metrics --rebuild` | recompute the team stats (ingest already does this) |
 | `python -m cs2review.metrics --buy-histogram` | see how team buys fall into eco / semi / full |
 | `python -m cs2review.digest --pretty` | the compact match summary an AI reads (latest match) |
+| `python -m cs2review.report --provider manual` | an AI match report; manual mode writes a prompt you paste into any chat app |
+| `python -m cs2review.report --post` | write the report with the Claude API and post it to Discord |
 | `python -m cs2review.debug_rounds X` | show the raw round events of a demo |
 
 ## Words used in the database

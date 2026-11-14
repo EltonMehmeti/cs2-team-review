@@ -10,7 +10,8 @@ A post-match review tool for one five-player CS2 team on FACEIT. It parses
 demo files into SQLite, computes team metrics, and uses an LLM to write
 reports and suggest plays. Phases 1 (demo -> SQLite + self-check), 2 (team
 metrics and round flags) and 3 (round summaries and match digest) are done.
-Phase 1.5 waits for the owner's FACEIT demos.
+Phase 4 (LLM match report) is built and waits for the owner's API key and
+webhook. Phase 1.5 waits for the owner's FACEIT demos.
 
 ## Hard rules
 
@@ -32,10 +33,12 @@ python -m cs2review.check --all         # self-check of every match
 python -m cs2review.metrics --rebuild   # recompute Phase 2 metrics (ingest does it too)
 python -m cs2review.metrics --buy-histogram   # tune buy-type thresholds
 python -m cs2review.digest MATCH_ID --pretty  # the JSON the LLM reads
+python -m cs2review.report MATCH_ID --provider manual [--post]  # LLM match report
 python -m cs2review.debug_rounds X.dem  # raw round events of one demo
 python tests/test_rounds.py             # unit tests (no demo needed)
 python tests/test_metrics.py            # Phase 2 unit tests (no demo needed)
 python tests/test_summaries.py          # Phase 3 unit tests (no demo needed)
+python tests/test_report.py             # Phase 4 unit tests (fake model, no network)
 python tests/test_integration.py        # end-to-end (needs tests/data/test_demo.dem)
 ```
 
@@ -62,6 +65,7 @@ git clone --depth 1 https://github.com/LaihoE/demoparser tmp_demoparser
   them.
 - Ask the owner for the inputs listed in section 9 of `PLAN.md` instead of
   inventing them (Steam IDs, map pool, zone files, API keys).
+- Tests never call a real model. Use `FakeProvider` from `llm.py`.
 
 ## Code layout
 
@@ -77,5 +81,9 @@ cs2review/check.py         CLI: scoreboard, self-check, KAST and opening duels
 cs2review/metrics.py       Phase 2: team_rounds, player_round_stats, kill flags
 cs2review/summaries.py     Phase 3: round summaries, match digest, pydantic models
 cs2review/digest.py        CLI: print or save a match digest
+cs2review/llm.py           the only module that calls a model (anthropic, manual, fake)
+cs2review/report.py        CLI: LLM match report, validated and rendered by code
+cs2review/notify.py        post to a Discord webhook
+cs2review/prompts/         prompt text files (never put prompts inside functions)
 cs2review/debug_rounds.py  CLI: raw round events
 ```

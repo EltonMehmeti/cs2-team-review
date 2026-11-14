@@ -22,8 +22,8 @@ from . import places
 # Bump this whenever a table or column changes. Version 1 was Phase 1 (no meta
 # table). Version 2 added the Phase 2 metrics: team_rounds, player_round_stats
 # and five new columns on kills. Version 3 added round_summaries and
-# match_digests (Phase 3).
-SCHEMA_VERSION = 3
+# match_digests (Phase 3). Version 4 added llm_calls and reports (Phase 4).
+SCHEMA_VERSION = 4
 
 
 class SchemaMismatchError(RuntimeError):
@@ -375,6 +375,39 @@ class MatchDigest(Base):
     match_id: Mapped[str] = mapped_column(String, primary_key=True)
     json: Mapped[str] = mapped_column(Text)
     token_estimate: Mapped[int] = mapped_column(Integer)  # characters / 4
+
+
+class LLMCall(Base):
+    """Every call to a language model: who, what for, tokens and cost (llm.py)."""
+
+    __tablename__ = "llm_calls"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    created_at: Mapped[str] = mapped_column(String)
+    provider: Mapped[str] = mapped_column(String)  # anthropic / manual / fake
+    model: Mapped[str] = mapped_column(String)
+    purpose: Mapped[str | None] = mapped_column(String)  # report / ask / trends ...
+    match_id: Mapped[str | None] = mapped_column(String)  # or another key, such as a question id
+    input_tokens: Mapped[int] = mapped_column(Integer)
+    output_tokens: Mapped[int] = mapped_column(Integer)
+    cost_usd: Mapped[float] = mapped_column(Float)
+    ok: Mapped[bool] = mapped_column(Boolean)
+    error: Mapped[str | None] = mapped_column(Text)
+
+
+class Report(Base):
+    """A match report written by the LLM and checked by code (report.py)."""
+
+    __tablename__ = "reports"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    match_id: Mapped[str] = mapped_column(String, index=True)
+    created_at: Mapped[str] = mapped_column(String)
+    provider: Mapped[str] = mapped_column(String)
+    model: Mapped[str] = mapped_column(String)
+    input_tokens: Mapped[int] = mapped_column(Integer)
+    output_tokens: Mapped[int] = mapped_column(Integer)
+    cost_usd: Mapped[float] = mapped_column(Float)
+    report_json: Mapped[str] = mapped_column(Text)
+    report_md: Mapped[str] = mapped_column(Text)
 
 
 class MapPlace(Base):

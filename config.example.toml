@@ -22,3 +22,15 @@ db_path = "data/cs2review.sqlite"   # the database
 pistol_max_money = 1000   # pistol round: every player started with this or less
 eco_below = 5000          # team gear value below this: eco
 full_from = 20000         # from this: full buy; in between: semi
+
+# The language model that writes reports (Phase 4). The API key is NOT set
+# here: put it in the ANTHROPIC_API_KEY environment variable. With
+# provider = "manual" the tool writes the prompt to out/ and you paste it
+# into any chat app, which costs nothing.
+[llm]
+provider = "anthropic"            # or "manual"
+model = "claude-haiku-5-5"        # cheapest; check the current id in the Claude docs
+max_cost_usd_per_run = 0.25       # hard stop for one command
+price_in_per_mtok = 0.10          # USD per million tokens, used only for cost logging
+price_out_per_mtok = 0.50         # (Claude pricing page, 2026-11-14)
+# effort = "low"                  # optional: low / medium / high

@@ -6,7 +6,8 @@ finds the team's recurring mistakes, tracks the plays the team runs, and
 suggests new plays with examples.
 
 This document is written for the agent (or person) who implements the rest.
-Phases 1 to 3 are built and tested. Phases 1.5 and 4 to 9 are specified below.
+Phases 1 to 3 are built and tested; Phase 4 is built and waits for the owner's
+key, webhook and checks. Phases 1.5 and 5 to 9 are specified below.
 
 | Phase | What | Status |
 |---|---|---|
@@ -14,7 +15,7 @@ Phases 1 to 3 are built and tested. Phases 1.5 and 4 to 9 are specified below.
 | 1.5 | Validate on the owner's real FACEIT demos, on Windows | To do (needs the owner's PC and demos) |
 | 2 | Team metrics and round flags (no AI) | Done, tested on the public demo |
 | 3 | Round summaries and match digest (the AI's input) | Done, tested on the public demo |
-| 4 | Match report written by an LLM, posted to Discord | To do |
+| 4 | Match report written by an LLM, posted to Discord | Built and tested with a fake model; needs the owner (see Phase 4) |
 | 5 | Trends across matches and a question-answering agent | To do |
 | 6 | Play detection: which plays the team runs | To do |
 | 7 | Playbook from opponents and pro demos, with lineups | To do |
@@ -117,10 +118,15 @@ cs2review/
   metrics.py       Phase 2: team_rounds, player_round_stats, kill columns
   summaries.py     Phase 3: round summaries, match digest, pydantic models
   digest.py        CLI: print or save the digest of a match
+  llm.py           Phase 4: the only module that talks to a model (anthropic, manual, fake)
+  report.py        Phase 4: CLI: match report, checked and rendered by code
+  notify.py        Phase 4: post to a Discord webhook
+  prompts/         prompt text files
 tests/
   test_rounds.py        unit tests, no demo needed
   test_metrics.py       Phase 2 unit tests, no demo needed
   test_summaries.py     Phase 3 unit tests, no demo needed
+  test_report.py        Phase 4 unit tests, fake model, no network
   test_integration.py   end-to-end test on a public demo (skips if missing)
 ```
 
@@ -321,6 +327,8 @@ every table change.
 | `player_round_stats` | player per played round: K, D, A, damage, KAST, openings, trades (Phase 2) |
 | `round_summaries` | played round: compact JSON from our point of view (Phase 3) |
 | `match_digests` | match: the digest JSON and its token estimate (Phase 3) |
+| `llm_calls` | every model call: provider, model, purpose, tokens, cost (Phase 4) |
+| `reports` | match report: JSON from the model, rendered Markdown, tokens, cost (Phase 4) |
 | `meta` | `schema_version` |
 
 ---
@@ -661,6 +669,37 @@ one and report back. If they differ, find the offset and document it.
 **Done when.** A report exists for a real match; it passes validation; cost
 is logged and under the cap; the owner checks three claims in the demo and
 they hold; `--provider manual` works end to end; `--post` reaches Discord.
+
+**What was built (Phase 4, 2026-11-14).** Everything above is in place and
+tested with a fake model (15 unit tests in `tests/test_report.py`); no real
+model was called. `--provider manual` works end to end in the tests and was
+run on the test demo: the prompt is about 6,000 tokens. Still open, all
+needing the owner: an `ANTHROPIC_API_KEY` (or the choice to stay manual), a
+report for a real match, three claims checked in the demo, a
+`DISCORD_WEBHOOK_URL` for `--post`, and the `demo_gototick` check.
+Decisions:
+
+- `llm.py` has three providers: `anthropic` (official SDK, imported only
+  when used), `manual`, and `fake` for tests. It uses structured outputs
+  (`output_config.format` with a JSON schema) and checks `stop_reason`
+  for `refusal` and `max_tokens` before reading the answer. Claude Haiku 5.5
+  has no server-side refusal fallback; a refusal fails the command.
+- The schema sent to the model has no item counts (not every provider
+  supports `minItems`); `report.py` checks the counts, the rounds, the
+  2-round rule for problems and every `t`. One retry with the list of
+  problems, then a loud failure. Nothing unchecked is stored or posted.
+- The cost cap is checked before each call with the worst case (whole
+  prompt plus `max_tokens` of output). Prompts over 50,000 tokens are
+  refused. Every call is logged to `llm_calls`; manual and fake calls cost 0.
+- Manual mode: the first run writes `out/prompt_<match>.md` and stops; the
+  second run reads `out/answer_<match>.json` (```json fences and chatter
+  around the JSON are fine). A bad answer produces
+  `out/prompt_<match>_retry.md` with the problems listed.
+- Discord posts send `allowed_mentions: {"parse": []}`, so text from a model
+  can never ping `@everyone`. Messages split at line breaks under 2,000
+  characters. Only the standard library is used for the webhook.
+- Rewatch lines start 5 seconds before the moment and never before the
+  round went live: `tick = freeze_end_tick + max(t - 5, 0) * tick_rate`.
 
 ### Phase 5: trends and the question agent
 

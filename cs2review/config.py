@@ -23,6 +23,19 @@ class BuyThresholds:
 
 
 @dataclass
+class LLMSettings:
+    """[llm] in config.toml. API keys are never here: they come from environment variables."""
+
+    provider: str = "anthropic"  # "anthropic" or "manual" (paste the prompt into any chat app)
+    model: str = "claude-haiku-5-5"  # the cheapest capable Claude model on 2026-11-14
+    max_cost_usd_per_run: float = 0.25  # hard stop for one command
+    price_in_per_mtok: float = 0.10  # USD per million input tokens, only for cost logging
+    price_out_per_mtok: float = 0.50  # USD per million output tokens
+    effort: str | None = None  # optional: low / medium / high (empty = the model's default)
+    out_dir: Path = Path("out")  # manual mode writes prompts here and reads answers from here
+
+
+@dataclass
 class Config:
     # steamID64 of each of your five players, as strings
     team_steam_ids: list[str] = field(default_factory=list)
@@ -34,6 +47,8 @@ class Config:
     db_path: Path = Path("data/cs2review.sqlite")
     # names for buy types ([buy_types] in config.toml)
     buy_types: BuyThresholds = field(default_factory=BuyThresholds)
+    # the language model ([llm] in config.toml)
+    llm: LLMSettings = field(default_factory=LLMSettings)
 
 
 def load_config(path: str | Path = "config.toml") -> Config:
@@ -52,4 +67,13 @@ def load_config(path: str | Path = "config.toml") -> Config:
     for key in ("pistol_max_money", "eco_below", "full_from"):
         if key in buy:
             setattr(cfg.buy_types, key, int(buy[key]))
+    llm = raw.get("llm", {})
+    for key in ("provider", "model", "effort"):
+        if key in llm:
+            setattr(cfg.llm, key, str(llm[key]) or None)
+    for key in ("max_cost_usd_per_run", "price_in_per_mtok", "price_out_per_mtok"):
+        if key in llm:
+            setattr(cfg.llm, key, float(llm[key]))
+    if "out_dir" in llm:
+        cfg.llm.out_dir = Path(llm["out_dir"])
     return cfg

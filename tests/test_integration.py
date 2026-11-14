@@ -166,6 +166,21 @@ def test_full_pipeline_on_public_demo():
             stored = conn.execute(text("SELECT COUNT(*) FROM round_summaries WHERE match_id = 'public_test'")).scalar_one()
             stored_digest = conn.execute(text("SELECT json FROM match_digests WHERE match_id = 'public_test'")).scalar_one()
         assert stored == 9 and stored_digest == to_json(digest)
+
+        # ---- Phase 4: the report prompt fits, and a valid answer passes the checks ----
+        from cs2review.llm import estimate_tokens
+        from cs2review.report import build_prompts, round_lengths, validate_report
+        system, user = build_prompts(digest)
+        assert estimate_tokens(system + user) < 10_000
+        lengths = round_lengths(digest)
+        assert lengths == {1: 112, 2: 70, 3: 70, 4: 45, 5: 53, 6: 92, 7: 71, 8: 76, 9: 39}
+        answer = {
+            "worked": [{"title": "w", "rounds": [1], "why": "y"}] * 3,
+            "problems": [{"title": "p", "rounds": [2, 5], "why": "y", "fix": "f"}] * 3,
+            "rewatch": [{"round": 2, "t": 21, "why": "y"}] * 5,
+            "practice": "trade",
+        }
+        assert validate_report(json.dumps(answer), lengths)[1] == []
         engine.dispose()
 
 

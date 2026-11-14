@@ -94,6 +94,7 @@ knife round or a restart that was counted as a real round.
 | `python -m cs2review.check` | scoreboard and check of the latest match |
 | `python -m cs2review.check --all` | short check of every match |
 | `python -m cs2review.check --list` | list stored matches |
+| `python -m cs2review.check --players` | everyone in the latest match with their steamID64, to fill `config.toml` |
 | `python -m cs2review.metrics --rebuild` | recompute the team stats (ingest already does this) |
 | `python -m cs2review.metrics --buy-histogram` | see how team buys fall into eco / semi / full |
 | `python -m cs2review.digest --pretty` | the compact match summary an AI reads (latest match) |

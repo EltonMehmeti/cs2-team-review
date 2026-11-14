@@ -4,6 +4,7 @@
     python -m cs2review.check MATCH_ID    # one match
     python -m cs2review.check --all       # every match, short form
     python -m cs2review.check --list      # list match ids
+    python -m cs2review.check --players   # every player with their steamID64
 
 Why this exists: the demo carries the game's own end-of-match scoreboard.
 If the kills, deaths, assists and score we rebuilt from single events agree
@@ -201,6 +202,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("match_id", nargs="?", help="match to show (default: the latest one)")
     ap.add_argument("--all", action="store_true", help="check every match, short form")
     ap.add_argument("--list", action="store_true", help="list match ids")
+    ap.add_argument("--players", action="store_true",
+                    help="list every player of a match with their steamID64 (to fill team_steam_ids in config.toml)")
     ap.add_argument("--config", default="config.toml")
     args = ap.parse_args(argv)
 
@@ -216,6 +219,18 @@ def main(argv: list[str] | None = None) -> int:
     if matches.empty:
         print("No matches in the database yet. Run:  python -m cs2review.ingest")
         return 1
+
+    if args.players:
+        match_id = args.match_id or matches["match_id"].iloc[-1]
+        players = _read(engine, "SELECT name, team, steamid, is_us FROM players WHERE match_id = :m ORDER BY team, name",
+                        m=match_id)
+        if players.empty:
+            print(f"Unknown match id: {match_id}. Use --list to see what is in the database.")
+            return 1
+        print(f"Players in {match_id} (team A started on T). Copy your five steamID64s into team_steam_ids in config.toml.")
+        for row in players.itertuples():
+            print(f"  team {row.team}  {row.steamid}  {row.name}" + ("   <- in your config" if row.is_us else ""))
+        return 0
 
     if args.list:
         for m in matches.itertuples():

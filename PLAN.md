@@ -6,13 +6,13 @@ finds the team's recurring mistakes, tracks the plays the team runs, and
 suggests new plays with examples.
 
 This document is written for the agent (or person) who implements the rest.
-Phase 1 is built and tested. Phases 1.5 to 9 are specified below.
+Phases 1 and 2 are built and tested. Phases 1.5 and 3 to 9 are specified below.
 
 | Phase | What | Status |
 |---|---|---|
 | 1 | Demo files in, SQLite tables out, self-check | Done, tested |
-| 1.5 | Validate on the owner's real FACEIT demos, on Windows | To do first |
-| 2 | Team metrics and round flags (no AI) | To do |
+| 1.5 | Validate on the owner's real FACEIT demos, on Windows | To do (needs the owner's PC and demos) |
+| 2 | Team metrics and round flags (no AI) | Done, tested on the public demo |
 | 3 | Round summaries and match digest (the AI's input) | To do |
 | 4 | Match report written by an LLM, posted to Discord | To do |
 | 5 | Trends across matches and a question-answering agent | To do |
@@ -114,8 +114,10 @@ cs2review/
   ingest.py        CLI: read demos from inbox/ into the database
   check.py         CLI: scoreboard + self-check against the demo's own totals
   debug_rounds.py  CLI: print the raw round events of a demo
+  metrics.py       Phase 2: team_rounds, player_round_stats, kill columns
 tests/
   test_rounds.py        unit tests, no demo needed
+  test_metrics.py       Phase 2 unit tests, no demo needed
   test_integration.py   end-to-end test on a public demo (skips if missing)
 ```
 
@@ -196,6 +198,12 @@ All of this was observed by running demoparser2 0.42.2 on a real demo.
   window therefore ends at `cs_win_panel_match`.
 - Kills can happen after `round_end` and before the next `round_start`. They
   count on the scoreboard. We keep them with `after_round_end = 1`.
+- A kill on the same tick as `round_end` (the last kill of an elimination
+  round) has `after_round_end = 0`. So does a death from the bomb exploding.
+- **The bomb can be planted after the round ended.** In round 3 of the test
+  demo the last CT died at 70.3 s and the bomb was planted at 76.5 s.
+  `rounds.bomb_planted` and `rounds.plant_site` (Phase 1) include such
+  plants; `team_rounds.planted` (Phase 2) ignores any plant after `end_tick`.
 
 **Scoreboard rules that match the game exactly**
 
@@ -253,8 +261,16 @@ the demoparser2 repository; see tests/test_integration.py):
   150 grenades (48 flash, 40 smoke, 34 HE, 28 molotov), 72 blinds,
   10 bomb events, 4533 position rows.
 - 62 kills happen before the round ends. With a 5-second trade window,
-  9 deaths are traded.
+  9 deaths are traded. (Counting a same-tick answer as a trade or not
+  changes nothing here: also 9.)
 - Side of the opening killer in rounds 1 to 9: T, CT, T, T, T, T, T, T, T.
+- Phase 2 (all in tests/test_integration.py): 18 `team_rounds`, 90
+  `player_round_stats`. Buy types team A: pistol, semi, semi, full x6;
+  team B: pistol, eco, full, eco, semi, full, semi, eco, semi. Team A plants
+  in rounds 1, 2, 4, 6, 7, 8. Clutches (1vN): A 1v2 in round 2 and 1v3 in
+  round 5 (both lost); B in 8 rounds, only the 1v1 in round 5 won. Per
+  player sums of kills, deaths, assists and damage in `player_round_stats`
+  equal the game's scoreboard exactly.
 
 ---
 
@@ -275,11 +291,13 @@ Keep these unless there is a strong reason; if you change one, write why.
 | Area names, not coordinates, for the LLM | "Jungle" means something to a model and a player; `-1162, -870` does not |
 | LLM sees summaries, never raw rows | Cost, and models miscount long lists |
 
-**Schema versioning (do this at the start of Phase 2).** Add a `meta` table
-with `schema_version`. `ingest` and every other command compare it with a
-constant in `db.py`; on mismatch they stop and print: "The database was made
-by an older version. Delete data/cs2review.sqlite and run
-`python -m cs2review.ingest` again."
+**Schema versioning (done in Phase 2).** A `meta` table holds the key
+`schema_version`. `db.get_engine` compares it with `SCHEMA_VERSION` in
+`db.py`, so `ingest`, `check` and `metrics` all refuse an old database and
+print: "The database was made by an older version. Delete
+data/cs2review.sqlite and run `python -m cs2review.ingest` again." A Phase 1
+database (no `meta` table) counts as old. Version 2 = Phase 2. Bump it on
+every table change.
 
 ### Existing tables (see db.py for every column)
 
@@ -296,6 +314,9 @@ by an older version. Delete data/cs2review.sqlite and run
 | `bomb_events` | plant, defuse, explode |
 | `positions` | living player per second: x, y, z, area, health |
 | `map_places` | grid cell per map: area name (grows with every demo) |
+| `team_rounds` | team per played round: buy, opening, trades, advantage, clutch, utility, plant, flags (Phase 2) |
+| `player_round_stats` | player per played round: K, D, A, damage, KAST, openings, trades (Phase 2) |
+| `meta` | `schema_version` |
 
 ---
 
@@ -431,6 +452,42 @@ flash_assists, enemies_blinded, teammates_blinded, utility_damage`.
 **Done when.** Tests pass; `team_rounds` and `player_round_stats` are filled
 for every match; `check --all` still passes; a new section in the check
 output prints KAST and opening duels per player for one match.
+
+**What was built and measured (Phase 2, 2026-11-14).** All four "Done when"
+items hold on the public test demo. `check` now also fails when a match has
+no metrics or an invariant breaks, so `check --all` proves "filled for every
+match" on the owner's database too. 29 unit tests in `tests/test_metrics.py`,
+golden numbers in `tests/test_integration.py`. Metrics take about 1 second
+per match. Decisions made while building, beyond the rules above:
+
+- Two kinds of counting. How the round went (openings, trades, alive counts,
+  advantage, clutches, `team_rounds.kills` / `deaths`) uses only kills with
+  `after_round_end = 0`, as the rules say. A player's own `kills`, `died`,
+  `assists`, `damage` and `headshot_kills` in `player_round_stats` count like
+  the scoreboard (also after the round ended), so they add up to it.
+  `survived` means alive when the round ended, so a player killed after the
+  round has `died = 1` and `survived = 1`.
+- Same-tick deaths (one HE, two victims): alive counts, advantage and clutch
+  are read after all deaths of that tick. Both kill rows show the same
+  `t_alive_after` / `ct_alive_after`.
+- A trade needs `0 <= answer time - death time <= TRADE_WINDOW_S` (5 s
+  counts) and the victim himself cannot trade his own death.
+- `untraded_deaths` counts only deaths to an enemy; a suicide, fall or bomb
+  death is in `deaths` but cannot be traded. So `traded + untraded <= deaths`.
+- `best_advantage` / `worst_disadvantage` include the start of the round
+  (normally 0), so a round without kills has 0 / 0.
+- `clutch_n` is 0 when there was no clutch; `clutch_won` is then empty, so
+  `AVG(clutch_won)` in SQL is the clutch win rate.
+- A clutch needs an enemy alive *after* the tick: if the last enemy dies on
+  the same tick, there is no clutch.
+- Extra columns: `team_rounds.opening_traded` (our opening death was traded;
+  used by `opening_death_untraded`) and `postplant_s` (plant to round end).
+- Grenade counts leave out grenades thrown after the round ended (none in
+  the test demo). Utility damage counts like damage (whole round window).
+- `multi_kill` is the number of kills when 2 or more, else 0.
+- Not checked against real FACEIT demos yet (Phase 1.5), and the buy-type
+  thresholds are still the defaults: the owner should look at
+  `python -m cs2review.metrics --buy-histogram` on real matches.
 
 ### Phase 3: round summaries and the match digest
 

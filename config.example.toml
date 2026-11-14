@@ -14,3 +14,11 @@ team_steam_ids = [
 inbox_dir = "inbox"                 # drop downloaded demos here
 demos_dir = "demos"                 # unpacked .dem files are kept here
 db_path = "data/cs2review.sqlite"   # the database
+
+# How a team's buy is named in each round (Phase 2). Defaults shown; they are
+# a starting point. Run `python -m cs2review.metrics --buy-histogram` to see
+# your matches and tune them. Gear value is scaled to five players.
+[buy_types]
+pistol_max_money = 1000   # pistol round: every player started with this or less
+eco_below = 5000          # team gear value below this: eco
+full_from = 20000         # from this: full buy; in between: semi

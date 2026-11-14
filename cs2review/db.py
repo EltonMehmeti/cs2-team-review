@@ -2,6 +2,10 @@
 
 One row in `matches` per demo. Every other table has a match_id column, so
 deleting or re-ingesting a match is a simple delete by match_id.
+
+The database is a cache: it can always be rebuilt from the demo files. When a
+table changes, SCHEMA_VERSION goes up and old databases are refused with a
+message that says how to rebuild (delete the file, run the ingest again).
 """
 
 from __future__ import annotations
@@ -9,14 +13,32 @@ from __future__ import annotations
 from pathlib import Path
 
 import pandas as pd
-from sqlalchemy import Boolean, Engine, Float, Index, Integer, String, Text, create_engine, delete, func, select
+from sqlalchemy import Boolean, Engine, Float, Index, Integer, String, Text, create_engine, delete, func, inspect, select
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 from . import places
 
 
+# Bump this whenever a table or column changes. Version 1 was Phase 1 (no meta
+# table). Version 2 added the Phase 2 metrics: team_rounds, player_round_stats
+# and five new columns on kills.
+SCHEMA_VERSION = 2
+
+
+class SchemaMismatchError(RuntimeError):
+    """The database file was made by a different version of the code."""
+
+
 class Base(DeclarativeBase):
     pass
+
+
+class Meta(Base):
+    """Facts about the database itself. Today only the key 'schema_version'."""
+
+    __tablename__ = "meta"
+    key: Mapped[str] = mapped_column(String, primary_key=True)
+    value: Mapped[str | None] = mapped_column(String)
 
 
 class Match(Base):
@@ -136,6 +158,12 @@ class Kill(Base):
     distance: Mapped[float | None] = mapped_column(Float)
     is_suicide: Mapped[bool | None] = mapped_column(Boolean)
     is_teamkill: Mapped[bool | None] = mapped_column(Boolean)
+    # filled by metrics.py (Phase 2); empty for kills after the round ended
+    is_opening: Mapped[bool | None] = mapped_column(Boolean)  # first real kill of the round
+    is_trade: Mapped[bool | None] = mapped_column(Boolean)  # this kill avenged a teammate within the trade window
+    was_traded: Mapped[bool | None] = mapped_column(Boolean)  # this death was avenged within the trade window
+    t_alive_after: Mapped[int | None] = mapped_column(Integer)  # living Ts after this tick's deaths
+    ct_alive_after: Mapped[int | None] = mapped_column(Integer)  # living CTs after this tick's deaths
     __table_args__ = (Index("ix_kills_match_round", "match_id", "round"),)
 
 
@@ -250,6 +278,86 @@ class Position(Base):
     yaw: Mapped[float | None] = mapped_column(Float)
 
 
+class TeamRound(Base):
+    """One team in one played round: how the round went for them (metrics.py).
+
+    The main table for everything after Phase 2. Kills, deaths, openings,
+    trades, advantages and clutches only use kills from before the round ended.
+    """
+
+    __tablename__ = "team_rounds"
+    match_id: Mapped[str] = mapped_column(String, primary_key=True)
+    round: Mapped[int] = mapped_column(Integer, primary_key=True)
+    team: Mapped[str] = mapped_column(String, primary_key=True)  # "A" or "B"
+    side: Mapped[str | None] = mapped_column(String)  # "T" or "CT" in this round
+    is_us: Mapped[bool] = mapped_column(Boolean)
+    won: Mapped[bool] = mapped_column(Boolean)
+    buy_type: Mapped[str | None] = mapped_column(String)  # pistol / eco / semi / full
+    enemy_buy_type: Mapped[str | None] = mapped_column(String)
+    equip_total: Mapped[int | None] = mapped_column(Integer)  # value of the team's gear at freeze end
+    players: Mapped[int] = mapped_column(Integer)  # players at freeze end, normally 5
+    opening: Mapped[str | None] = mapped_column(String)  # "won" / "lost" / empty if no real kill
+    opening_time_s: Mapped[float | None] = mapped_column(Float)
+    opening_traded: Mapped[bool | None] = mapped_column(Boolean)  # our opening death was traded (only if lost)
+    kills: Mapped[int] = mapped_column(Integer)  # kills of enemies
+    deaths: Mapped[int] = mapped_column(Integer)  # deaths of any kind (also suicides, teamkills, the bomb)
+    traded_deaths: Mapped[int] = mapped_column(Integer)
+    untraded_deaths: Mapped[int] = mapped_column(Integer)  # killed by an enemy and not traded
+    best_advantage: Mapped[int] = mapped_column(Integer)  # max of (own alive - enemy alive)
+    worst_disadvantage: Mapped[int] = mapped_column(Integer)  # min of (own alive - enemy alive)
+    clutch_n: Mapped[int] = mapped_column(Integer)  # N of the first 1vN, 0 if there was none
+    clutch_won: Mapped[bool | None] = mapped_column(Boolean)  # empty when clutch_n is 0
+    smokes: Mapped[int] = mapped_column(Integer)
+    flashes: Mapped[int] = mapped_column(Integer)
+    hes: Mapped[int] = mapped_column(Integer)
+    molotovs: Mapped[int] = mapped_column(Integer)  # molotovs and incendiaries
+    enemies_blinded: Mapped[int] = mapped_column(Integer)  # for 1 second or more
+    teammates_blinded: Mapped[int] = mapped_column(Integer)
+    utility_damage: Mapped[int] = mapped_column(Integer)  # HE and fire damage to enemies
+    planted: Mapped[bool] = mapped_column(Boolean)  # a plant before the round ended (either side's row)
+    plant_site: Mapped[str | None] = mapped_column(String)
+    plant_time_s: Mapped[float | None] = mapped_column(Float)
+    postplant_s: Mapped[float | None] = mapped_column(Float)  # seconds from the plant to the round end
+    alive_at_plant: Mapped[int | None] = mapped_column(Integer)
+    enemy_alive_at_plant: Mapped[int | None] = mapped_column(Integer)
+    survivors: Mapped[int] = mapped_column(Integer)  # alive when the round ended
+    flags: Mapped[str] = mapped_column(Text)  # JSON list, e.g. ["lost_opening", "team_flash"]
+
+
+class PlayerRoundStat(Base):
+    """One player in one played round (metrics.py).
+
+    kills, died, assists, damage and headshot_kills count like the in-game
+    scoreboard (also after the round ended), so they add up to it. Everything
+    else (openings, trades, survived, clutches) only uses the live round.
+    """
+
+    __tablename__ = "player_round_stats"
+    match_id: Mapped[str] = mapped_column(String, primary_key=True)
+    round: Mapped[int] = mapped_column(Integer, primary_key=True)
+    steamid: Mapped[str] = mapped_column(String, primary_key=True)
+    team: Mapped[str | None] = mapped_column(String)
+    side: Mapped[str | None] = mapped_column(String)
+    kills: Mapped[int] = mapped_column(Integer)
+    died: Mapped[bool] = mapped_column(Boolean)
+    assists: Mapped[int] = mapped_column(Integer)
+    damage: Mapped[int] = mapped_column(Integer)  # health removed from enemies; ADR = sum / rounds
+    headshot_kills: Mapped[int] = mapped_column(Integer)
+    opening_kill: Mapped[bool] = mapped_column(Boolean)
+    opening_death: Mapped[bool] = mapped_column(Boolean)
+    trade_kills: Mapped[int] = mapped_column(Integer)
+    was_traded: Mapped[bool] = mapped_column(Boolean)
+    survived: Mapped[bool] = mapped_column(Boolean)  # alive when the round ended
+    kast: Mapped[bool] = mapped_column(Boolean)  # kill, assist, survived or traded
+    multi_kill: Mapped[int] = mapped_column(Integer)  # number of kills if 2 or more, else 0
+    clutch_n: Mapped[int] = mapped_column(Integer)  # N if this player was the last one in a 1vN, else 0
+    clutch_won: Mapped[bool | None] = mapped_column(Boolean)
+    flash_assists: Mapped[int] = mapped_column(Integer)
+    enemies_blinded: Mapped[int] = mapped_column(Integer)
+    teammates_blinded: Mapped[int] = mapped_column(Integer)
+    utility_damage: Mapped[int] = mapped_column(Integer)
+
+
 class MapPlace(Base):
     """Grid of known area names per map (shared by all matches)."""
 
@@ -264,14 +372,41 @@ class MapPlace(Base):
 
 # tables that hold rows of a single match, in the order they are written
 MATCH_MODELS = [Match, Player, Round, PlayerRound, Kill, Damage, Grenade, Blind, BombEvent, Position]
+# tables computed from the ones above by metrics.py (deleted with the match too)
+METRIC_MODELS = [TeamRound, PlayerRoundStat]
 
 
 def get_engine(db_path: str | Path) -> Engine:
-    """Open (and create if needed) the SQLite database."""
+    """Open (and create if needed) the SQLite database.
+
+    Raises SchemaMismatchError if the file was made by another version of the
+    code. Every command calls this, so none of them works on an old database.
+    """
     db_path = Path(db_path)
     db_path.parent.mkdir(parents=True, exist_ok=True)
     engine = create_engine(f"sqlite:///{db_path.as_posix()}")
+    existing = set(inspect(engine).get_table_names())
+    if existing:
+        found = None
+        if "meta" in existing:
+            with engine.connect() as conn:
+                found = conn.execute(select(Meta.value).where(Meta.key == "schema_version")).scalar_one_or_none()
+        if found != str(SCHEMA_VERSION):
+            engine.dispose()
+            if found is not None and found.isdigit() and int(found) > SCHEMA_VERSION:
+                raise SchemaMismatchError(
+                    f"The database was made by a newer version of this tool (schema {found}, "
+                    f"this code knows {SCHEMA_VERSION}). Update the code, or delete {db_path.as_posix()} "
+                    "and run `python -m cs2review.ingest` again."
+                )
+            raise SchemaMismatchError(
+                f"The database was made by an older version. Delete {db_path.as_posix()} "
+                "and run `python -m cs2review.ingest` again."
+            )
     Base.metadata.create_all(engine)
+    if not existing:
+        with engine.begin() as conn:
+            conn.execute(Meta.__table__.insert().values(key="schema_version", value=str(SCHEMA_VERSION)))
     return engine
 
 
@@ -292,7 +427,7 @@ def load_place_cells(engine: Engine, map_name: str) -> pd.DataFrame:
 
 def delete_match(engine: Engine, match_id: str) -> None:
     with engine.begin() as conn:
-        for model in MATCH_MODELS:
+        for model in MATCH_MODELS + METRIC_MODELS:
             conn.execute(delete(model).where(model.match_id == match_id))
 
 
@@ -300,7 +435,8 @@ def save_match(engine: Engine, tables: dict[str, pd.DataFrame]) -> None:
     """Write all tables of one match in a single transaction (replacing old rows)."""
     match_id = str(tables["matches"]["match_id"].iloc[0])
     with engine.begin() as conn:
-        for model in MATCH_MODELS:
+        # old metrics would point at kills that no longer exist; metrics.py rebuilds them
+        for model in MATCH_MODELS + METRIC_MODELS:
             conn.execute(delete(model).where(model.match_id == match_id))
         for model in MATCH_MODELS:
             frame = tables[model.__tablename__]

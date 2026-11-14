@@ -12,6 +12,7 @@ own end-of-match scoreboard. If a change makes this test fail, the change
 broke the parsing.
 """
 
+import json
 import os
 import sys
 import tempfile
@@ -36,14 +37,30 @@ SCOREBOARD = {
 }
 TEAM_A = {"76561197964020430", "76561198265366770", "76561198244754626", "76561198118803912", "76561198202353993"}
 
+# Phase 2 golden numbers. steamid -> (KAST rounds, opening kills, opening deaths,
+# trade kills, traded deaths), out of 9 played rounds
+DUELS = {
+    "76561197964020430": (9, 2, 0, 1, 2),
+    "76561198265366770": (9, 1, 0, 1, 1),
+    "76561198244754626": (8, 5, 0, 1, 0),
+    "76561198118803912": (7, 0, 1, 2, 1),
+    "76561198202353993": (8, 0, 0, 0, 1),
+    "76561198258044111": (5, 0, 0, 1, 1),
+    "76561198194694750": (4, 0, 2, 2, 0),
+    "76561198280975787": (3, 1, 1, 0, 0),
+    "76561198073049527": (6, 0, 2, 0, 1),
+    "76561198324843075": (6, 0, 3, 1, 2),
+}
+
 
 def test_full_pipeline_on_public_demo():
     if not DEMO.exists():
         print(f"skipped: {DEMO} not found (see the top of this file)")
         return
 
-    from cs2review.check import check_match, scoreboard
+    from cs2review.check import check_match, format_report, scoreboard
     from cs2review.db import get_engine, load_place_cells, save_match
+    from cs2review.metrics import build_match_metrics, check_invariants, load_tables
     from cs2review.parse import parse_demo
 
     tables = parse_demo(DEMO, team_steam_ids=sorted(TEAM_A), match_id="public_test")
@@ -80,6 +97,7 @@ def test_full_pipeline_on_public_demo():
     with tempfile.TemporaryDirectory() as tmp:
         engine = get_engine(Path(tmp) / "test.sqlite")
         save_match(engine, tables)
+        result = build_match_metrics(engine, "public_test")
         ok, findings = check_match(engine, "public_test")
         assert ok, findings
         board = scoreboard(engine, "public_test").set_index("steamid")
@@ -87,6 +105,46 @@ def test_full_pipeline_on_public_demo():
             row = board.loc[steamid]
             assert (row["K"], row["D"], row["A"], row["damage"]) == (kills, deaths, assists, damage), steamid
         assert len(load_place_cells(engine, "de_mirage")) > 1000
+
+        # ---- Phase 2: metrics -------------------------------------------------
+        kills = result["kills"]
+        live = kills[~kills["after_round_end"]]
+        assert len(live) == 62  # kills before the round ended
+        assert int(kills["was_traded"].sum()) == 9 and int(kills["is_trade"].sum()) == 9
+        openings = kills[kills["is_opening"]].sort_values("round")
+        assert list(openings["round"]) == list(range(1, 10))
+        assert list(openings["attacker_side"]) == ["T", "CT", "T", "T", "T", "T", "T", "T", "T"]
+        assert int(live["t_alive_after"].min()) == 0 and int(live["ct_alive_after"].min()) == 0
+        assert kills.loc[kills["after_round_end"], "t_alive_after"].isna().all()
+
+        team_rounds, stats = result["team_rounds"], result["player_round_stats"]
+        assert len(team_rounds) == 18 and len(stats) == 90
+        assert check_invariants(kills, team_rounds, load_tables(engine, "public_test")["rounds"]) == []
+        a = team_rounds[team_rounds["team"] == "A"].sort_values("round")
+        b = team_rounds[team_rounds["team"] == "B"].sort_values("round")
+        assert a["is_us"].all() and not b["is_us"].any()
+        assert list(a["buy_type"]) == ["pistol", "semi", "semi", "full", "full", "full", "full", "full", "full"]
+        assert list(b["buy_type"]) == ["pistol", "eco", "full", "eco", "semi", "full", "semi", "eco", "semi"]
+        assert list(a["opening"]) == ["won", "lost", "won", "won", "won", "won", "won", "won", "won"]
+        # round 3: the bomb went down after all CTs were dead, so it is not a plant
+        assert list(a["planted"]) == [True, True, False, True, False, True, True, True, False]
+        assert list(a["clutch_n"]) == [0, 2, 0, 0, 3, 0, 0, 0, 0]
+        assert list(b["clutch_n"]) == [2, 0, 5, 5, 1, 3, 3, 5, 5]
+        assert [bool(v) for v in b.loc[b["clutch_n"] > 0, "clutch_won"]] == [False] * 3 + [True] + [False] * 4  # round 5: a 1v1 won
+        flags_a = [f for row in a["flags"] for f in json.loads(row)]
+        assert flags_a.count("won_opening") == 8 and flags_a.count("postplant_won") == 5
+        assert flags_a.count("team_flash") == 7 and flags_a.count("full_buy_no_plant") == 1
+
+        # per player: the box-score numbers add up to the game's own scoreboard
+        totals = stats.groupby("steamid")[["kills", "died", "assists", "damage"]].sum()
+        for steamid, (k, d, a_, dmg) in SCOREBOARD.items():
+            assert tuple(int(v) for v in totals.loc[steamid]) == (k, d, a_, dmg), steamid
+        duels = stats.groupby("steamid")[["kast", "opening_kill", "opening_death", "trade_kills", "was_traded"]].sum()
+        for steamid, expected in DUELS.items():
+            assert tuple(int(v) for v in duels.loc[steamid]) == expected, steamid
+
+        report = format_report(engine, "public_test")
+        assert "KAST and opening duels" in report and "team A won 8 of 9 opening duels" in report
         engine.dispose()
 
 

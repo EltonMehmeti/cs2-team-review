@@ -20,7 +20,8 @@ from demoparser2 import DemoParser
 
 from .check import check_match
 from .config import load_config
-from .db import get_engine, has_match, load_place_cells, save_match
+from .db import SchemaMismatchError, get_engine, has_match, load_place_cells, save_match
+from .metrics import build_match_metrics
 from .parse import parse_demo
 from .unpack import is_demo_file, match_id_for, unpack_demo
 
@@ -54,6 +55,7 @@ def ingest_file(src: Path, engine, cfg, force: bool = False) -> str:
         match_id=match_id,
     )
     save_match(engine, tables)
+    build_match_metrics(engine, match_id, cfg.buy_types)  # Phase 2: team_rounds, player_round_stats
 
     m = tables["matches"].iloc[0]
     ok, findings = check_match(engine, match_id)
@@ -84,7 +86,11 @@ def main(argv: list[str] | None = None) -> int:
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
     cfg = load_config(args.config)
-    engine = get_engine(cfg.db_path)
+    try:
+        engine = get_engine(cfg.db_path)
+    except SchemaMismatchError as exc:
+        print(exc)
+        return 1
     cfg.inbox_dir.mkdir(parents=True, exist_ok=True)
 
     demos = find_demos(args.paths or [cfg.inbox_dir])

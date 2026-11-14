@@ -2,8 +2,10 @@
 
 Reads your team's CS2 demo files after a match and stores what happened in a
 small database: rounds, kills, damage, grenades, flashes, bomb events, money
-and where everyone stood. Later phases add team stats, AI reports and play
-suggestions (see `PLAN.md`).
+and where everyone stood. It then computes team stats for every round:
+opening duels, trades, KAST, buy types, clutches, utility, post-plants, and
+short flags such as `threw_advantage` or `team_flash`. Later phases add AI
+reports and play suggestions (see `PLAN.md`).
 
 It only reads demo files from disk. It never touches the running game, so it
 cannot cause FPS drops or anti-cheat problems. Run it after you finish
@@ -42,7 +44,8 @@ playing.
    python -m cs2review.check
    ```
 
-   This prints the scoreboard and the list of rounds.
+   This prints the scoreboard, the list of rounds, and KAST and opening
+   duels per player.
 
 The database is the file `data/cs2review.sqlite`. Open it with any SQLite
 viewer, for example "DB Browser for SQLite".
@@ -72,6 +75,8 @@ knife round or a restart that was counted as a real round.
 | `python -m cs2review.check` | scoreboard and check of the latest match |
 | `python -m cs2review.check --all` | short check of every match |
 | `python -m cs2review.check --list` | list stored matches |
+| `python -m cs2review.metrics --rebuild` | recompute the team stats (ingest already does this) |
+| `python -m cs2review.metrics --buy-histogram` | see how team buys fall into eco / semi / full |
 | `python -m cs2review.debug_rounds X` | show the raw round events of a demo |
 
 ## Words used in the database
@@ -84,15 +89,20 @@ knife round or a restart that was counted as a real round.
 | team | A or B. A is the team that starts on T. The letter stays when sides swap. `matches.us_team` tells which one is yours |
 | place | the game's own name for a map area, such as `Jungle` or `BombsiteA` |
 | `played` | 0 for a round that never went live (a surrender in freeze time) |
+| opening | the first kill of a round; the team that gets it plays 5 against 4 |
+| trade | a teammate kills your killer within 5 seconds of your death |
+| KAST | share of rounds with a Kill, an Assist, Survival or a Trade |
+| buy type | `pistol`, `eco` (saving), `semi` (partial buy), `full` |
 
 ## Tables
 
 `matches`, `players`, `rounds`, `player_rounds` (money and gear per round),
 `kills`, `damages`, `grenades`, `blinds`, `bomb_events`, `positions` (every
-living player once per second), `map_places`. Every column is described in
-`cs2review/db.py`.
+living player once per second), `map_places`, and the team stats:
+`team_rounds` (one row per team per round) and `player_round_stats` (one row
+per player per round). Every column is described in `cs2review/db.py`.
 
-Two example questions you can already ask with SQL:
+Some example questions you can already ask with SQL:
 
 ```sql
 -- where do our players die first?
@@ -109,7 +119,21 @@ FROM grenades g JOIN players p
   ON p.match_id = g.match_id AND p.steamid = g.thrower_steamid
 WHERE g.type = 'flash' AND p.is_us = 1
 GROUP BY p.name ORDER BY 2 DESC;
+
+-- how often do we win the opening duel, and the round after it?
+SELECT side, COUNT(*) AS rounds,
+       ROUND(100.0 * AVG(opening = 'won')) AS opening_win_pct,
+       ROUND(100.0 * AVG(won) FILTER (WHERE opening = 'won')) AS win_pct_after_opening
+FROM team_rounds WHERE is_us = 1 GROUP BY side;
+
+-- which rounds did we throw from a 2-player advantage?
+SELECT match_id, round, side, best_advantage
+FROM team_rounds, json_each(team_rounds.flags)
+WHERE is_us = 1 AND json_each.value = 'threw_advantage';
 ```
+
+Tip for pandas: read the flags column as `df["flags"]`, not `df.flags`
+(`df.flags` is a pandas setting, not the column).
 
 ## Known limits
 
@@ -121,8 +145,12 @@ GROUP BY p.name ORDER BY 2 DESC;
 - The demo does not contain the match date. `matches.file_time` is the
   file's modification time.
 - CS:GO demos are not supported.
-- After updating the code, delete `data/cs2review.sqlite` and run the ingest
+- After updating the code, the tools may say "The database was made by an
+  older version". Then delete `data/cs2review.sqlite` and run the ingest
   again. The database is rebuilt from the demos in seconds.
+- The buy-type limits (eco below $5,000 of team gear, full from $20,000) are
+  first guesses. Check them with `--buy-histogram` and change them in
+  `config.toml` under `[buy_types]`.
 
 ## Handing the rest to an AI agent
 

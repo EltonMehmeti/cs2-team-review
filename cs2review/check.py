@@ -4,6 +4,7 @@
     python -m cs2review.check MATCH_ID    # one match
     python -m cs2review.check --all       # every match, short form
     python -m cs2review.check --list      # list match ids
+    python -m cs2review.check --players   # every player with their steamID64
 
 Why this exists: the demo carries the game's own end-of-match scoreboard.
 If the kills, deaths, assists and score we rebuilt from single events agree
@@ -19,7 +20,8 @@ import pandas as pd
 from sqlalchemy import Engine, text
 
 from .config import load_config
-from .db import get_engine, list_matches
+from .db import SchemaMismatchError, get_engine, list_matches
+from .metrics import check_invariants
 
 
 def _read(engine: Engine, sql: str, **params) -> pd.DataFrame:
@@ -97,7 +99,39 @@ def check_match(engine: Engine, match_id: str) -> tuple[bool, list[str]]:
         elif worst > 0:
             notes.append(f"Damage is within {max(worst, 0.01):.0%} of the demo's totals (small differences are normal).")
 
+    # Phase 2 metrics must exist and agree with the kills (see metrics.check_invariants)
+    rounds = _read(engine, "SELECT * FROM rounds WHERE match_id = :m", m=match_id)
+    team_rounds = _read(engine, "SELECT * FROM team_rounds WHERE match_id = :m", m=match_id)
+    if team_rounds.empty and int(match["rounds_played"]) > 0:
+        problems.append("no team metrics yet: run  python -m cs2review.metrics --rebuild")
+    else:
+        kills = _read(engine, "SELECT * FROM kills WHERE match_id = :m", m=match_id)
+        problems.extend(f"metrics: {p}" for p in check_invariants(kills, team_rounds, rounds))
+
     return (not problems), problems + notes
+
+
+def player_duels(engine: Engine, match_id: str) -> pd.DataFrame:
+    """KAST and opening duels per player, from player_round_stats."""
+    return _read(
+        engine,
+        """
+        SELECT p.name, p.team, p.is_us,
+               COUNT(*)                                   AS rounds,
+               ROUND(100.0 * SUM(s.kast) / COUNT(*))      AS kast_pct,
+               SUM(s.opening_kill)                        AS opening_kills,
+               SUM(s.opening_death)                       AS opening_deaths,
+               SUM(s.trade_kills)                         AS trade_kills,
+               SUM(s.was_traded)                          AS traded_deaths,
+               SUM(NOT s.survived)                        AS live_deaths
+        FROM player_round_stats s
+        JOIN players p ON p.match_id = s.match_id AND p.steamid = s.steamid
+        WHERE s.match_id = :m
+        GROUP BY s.steamid
+        ORDER BY p.team, kast_pct DESC, p.name
+        """,
+        m=match_id,
+    )
 
 
 def format_report(engine: Engine, match_id: str, short: bool = False) -> str:
@@ -134,6 +168,31 @@ def format_report(engine: Engine, match_id: str, short: bool = False) -> str:
         winner = f"{r.winner_team} ({r.winner_side})"
         lines.append(f"{r.round:>3}  {r.t_team:<2}{r.ct_team:<3} {winner:<8}{str(r.reason):<15}{length:>7}  {plant}")
 
+    duels = player_duels(engine, match_id)
+    if not duels.empty:
+        lines += [
+            "",
+            "KAST and opening duels (KAST = rounds with a kill, assist, survival or trade;",
+            "opening = the first kill of a round; trade K = avenged a teammate within 5 s;",
+            "traded = own deaths that a teammate avenged, of all deaths before the round ended)",
+            "",
+            f"{'':2}{'player':<24}{'team':<5}{'KAST%':>6}{'open K':>8}{'open D':>8}{'trade K':>9}{'traded':>9}",
+        ]
+        for row in duels.itertuples():
+            mark = "*" if row.is_us else " "
+            lines.append(
+                f"{mark:2}{str(row.name)[:23]:<24}{row.team:<5}{int(row.kast_pct):>6}{int(row.opening_kills):>8}"
+                f"{int(row.opening_deaths):>8}{int(row.trade_kills):>9}{f'{int(row.traded_deaths)}/{int(row.live_deaths)}':>9}"
+            )
+        openings = _read(
+            engine,
+            "SELECT team, SUM(opening = 'won') AS won, COUNT(opening) AS duels FROM team_rounds "
+            "WHERE match_id = :m GROUP BY team ORDER BY team",
+            m=match_id,
+        )
+        lines.append("")
+        lines += [f"  team {o.team} won {int(o.won)} of {int(o.duels)} opening duels" for o in openings.itertuples()]
+
     lines += ["", verdict] + [f"  - {f}" for f in findings]
     return "\n".join(lines)
 
@@ -143,17 +202,35 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("match_id", nargs="?", help="match to show (default: the latest one)")
     ap.add_argument("--all", action="store_true", help="check every match, short form")
     ap.add_argument("--list", action="store_true", help="list match ids")
+    ap.add_argument("--players", action="store_true",
+                    help="list every player of a match with their steamID64 (to fill team_steam_ids in config.toml)")
     ap.add_argument("--config", default="config.toml")
     args = ap.parse_args(argv)
 
     if hasattr(sys.stdout, "reconfigure"):  # player names can contain any character
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
-    engine = get_engine(load_config(args.config).db_path)
+    try:
+        engine = get_engine(load_config(args.config).db_path)
+    except SchemaMismatchError as exc:
+        print(exc)
+        return 1
     matches = list_matches(engine)
     if matches.empty:
         print("No matches in the database yet. Run:  python -m cs2review.ingest")
         return 1
+
+    if args.players:
+        match_id = args.match_id or matches["match_id"].iloc[-1]
+        players = _read(engine, "SELECT name, team, steamid, is_us FROM players WHERE match_id = :m ORDER BY team, name",
+                        m=match_id)
+        if players.empty:
+            print(f"Unknown match id: {match_id}. Use --list to see what is in the database.")
+            return 1
+        print(f"Players in {match_id} (team A started on T). Copy your five steamID64s into team_steam_ids in config.toml.")
+        for row in players.itertuples():
+            print(f"  team {row.team}  {row.steamid}  {row.name}" + ("   <- in your config" if row.is_us else ""))
+        return 0
 
     if args.list:
         for m in matches.itertuples():

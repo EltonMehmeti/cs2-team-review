@@ -1,0 +1,10 @@
+Here are our trends, as JSON:
+
+{trends}
+
+Write one JSON object with exactly:
+- "headline": one sentence about the week
+- "strengths": 2 items, each {{"title", "why", "evidence"}}
+- "weaknesses": 3 items, each {{"title", "why", "fix", "evidence"}}
+- "focus": one sentence, the one thing to work on next week
+"evidence" is a list of 1 to 3 paths into the trend data.

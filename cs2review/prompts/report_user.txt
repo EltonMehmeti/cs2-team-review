@@ -1,0 +1,11 @@
+Here is the digest of the match, as JSON:
+
+{digest}
+
+Write the review as one JSON object with exactly:
+- "worked": 3 items, things that went well, each {{"title", "rounds", "why"}}
+- "problems": 3 items, recurring problems, each {{"title", "rounds", "why", "fix"}} with at least 2 rounds
+- "rewatch": 5 moments to watch together, each {{"round", "t", "why"}}
+- "practice": one sentence, the single thing to practise before the next match
+
+The rounds that were played are: {rounds}.

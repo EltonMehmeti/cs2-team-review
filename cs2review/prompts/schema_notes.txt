@@ -1,0 +1,13 @@
+Tables and views (one line each; columns follow below):
+- our_rounds (view): one row per round for OUR team only: side, won, buy_type, opening ('won'/'lost'/null), kills, deaths, traded_deaths, untraded_deaths, best_advantage, worst_disadvantage, clutch_n, clutch_won, utility counts, planted, plant_site, survivors, flags (JSON list), plus map and file_time. Start here for team questions.
+- our_player_rounds (view): one row per OUR player per round: name, kills, died, assists, damage, kast, opening_kill, opening_death, trade_kills, was_traded, survived, clutch_n, clutch_won, flash_assists, enemies_blinded, teammates_blinded, utility_damage, plus map.
+- our_kills (view): every kill in played rounds with by_us (we killed) and of_us (we died), is_opening, is_trade, was_traded, victim_place, attacker_place, weapon, time_s, after_round_end, plus map.
+- matches: one row per demo: map, score_a, score_b, us_team ('A' or 'B'), team names, file_time (stand-in for the date).
+- players: one row per player per match: name, team ('A'/'B'), is_us.
+- rounds: one row per round: t_team, ct_team, winner_team, reason, played (only played = 1 counts), duration_s, plant_time_s.
+- team_rounds: like our_rounds but for both teams (is_us tells which).
+- player_round_stats: like our_player_rounds but for all ten players.
+- kills, damages, grenades, blinds, bomb_events, positions: raw events (positions: every living player once per second, with place = map area).
+- round_summaries: match_id, round, json (the compact round summary; use get_round instead).
+Booleans are 1/0. flags is a JSON list: use json_each(our_rounds.flags) to filter by a flag.
+Rates: win rate = AVG(won); KAST% = 100.0 * AVG(kast); ADR = SUM(damage) / number of rounds; trade rate = SUM(traded_deaths) / (SUM(traded_deaths) + SUM(untraded_deaths)).

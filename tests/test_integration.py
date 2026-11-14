@@ -12,6 +12,7 @@ own end-of-match scoreboard. If a change makes this test fail, the change
 broke the parsing.
 """
 
+import json
 import os
 import sys
 import tempfile
@@ -36,15 +37,32 @@ SCOREBOARD = {
 }
 TEAM_A = {"76561197964020430", "76561198265366770", "76561198244754626", "76561198118803912", "76561198202353993"}
 
+# Phase 2 golden numbers. steamid -> (KAST rounds, opening kills, opening deaths,
+# trade kills, traded deaths), out of 9 played rounds
+DUELS = {
+    "76561197964020430": (9, 2, 0, 1, 2),
+    "76561198265366770": (9, 1, 0, 1, 1),
+    "76561198244754626": (8, 5, 0, 1, 0),
+    "76561198118803912": (7, 0, 1, 2, 1),
+    "76561198202353993": (8, 0, 0, 0, 1),
+    "76561198258044111": (5, 0, 0, 1, 1),
+    "76561198194694750": (4, 0, 2, 2, 0),
+    "76561198280975787": (3, 1, 1, 0, 0),
+    "76561198073049527": (6, 0, 2, 0, 1),
+    "76561198324843075": (6, 0, 3, 1, 2),
+}
+
 
 def test_full_pipeline_on_public_demo():
     if not DEMO.exists():
         print(f"skipped: {DEMO} not found (see the top of this file)")
         return
 
-    from cs2review.check import check_match, scoreboard
+    from cs2review.check import check_match, format_report, scoreboard
     from cs2review.db import get_engine, load_place_cells, save_match
+    from cs2review.metrics import build_match_metrics, check_invariants, load_tables
     from cs2review.parse import parse_demo
+    from cs2review.summaries import Digest, build_digest, to_json
 
     tables = parse_demo(DEMO, team_steam_ids=sorted(TEAM_A), match_id="public_test")
 
@@ -80,6 +98,7 @@ def test_full_pipeline_on_public_demo():
     with tempfile.TemporaryDirectory() as tmp:
         engine = get_engine(Path(tmp) / "test.sqlite")
         save_match(engine, tables)
+        result = build_match_metrics(engine, "public_test")
         ok, findings = check_match(engine, "public_test")
         assert ok, findings
         board = scoreboard(engine, "public_test").set_index("steamid")
@@ -87,6 +106,128 @@ def test_full_pipeline_on_public_demo():
             row = board.loc[steamid]
             assert (row["K"], row["D"], row["A"], row["damage"]) == (kills, deaths, assists, damage), steamid
         assert len(load_place_cells(engine, "de_mirage")) > 1000
+
+        # ---- Phase 2: metrics -------------------------------------------------
+        kills = result["kills"]
+        live = kills[~kills["after_round_end"]]
+        assert len(live) == 62  # kills before the round ended
+        assert int(kills["was_traded"].sum()) == 9 and int(kills["is_trade"].sum()) == 9
+        openings = kills[kills["is_opening"]].sort_values("round")
+        assert list(openings["round"]) == list(range(1, 10))
+        assert list(openings["attacker_side"]) == ["T", "CT", "T", "T", "T", "T", "T", "T", "T"]
+        assert int(live["t_alive_after"].min()) == 0 and int(live["ct_alive_after"].min()) == 0
+        assert kills.loc[kills["after_round_end"], "t_alive_after"].isna().all()
+
+        team_rounds, stats = result["team_rounds"], result["player_round_stats"]
+        assert len(team_rounds) == 18 and len(stats) == 90
+        assert check_invariants(kills, team_rounds, load_tables(engine, "public_test")["rounds"]) == []
+        a = team_rounds[team_rounds["team"] == "A"].sort_values("round")
+        b = team_rounds[team_rounds["team"] == "B"].sort_values("round")
+        assert a["is_us"].all() and not b["is_us"].any()
+        assert list(a["buy_type"]) == ["pistol", "semi", "semi", "full", "full", "full", "full", "full", "full"]
+        assert list(b["buy_type"]) == ["pistol", "eco", "full", "eco", "semi", "full", "semi", "eco", "semi"]
+        assert list(a["opening"]) == ["won", "lost", "won", "won", "won", "won", "won", "won", "won"]
+        # round 3: the bomb went down after all CTs were dead, so it is not a plant
+        assert list(a["planted"]) == [True, True, False, True, False, True, True, True, False]
+        assert list(a["clutch_n"]) == [0, 2, 0, 0, 3, 0, 0, 0, 0]
+        assert list(b["clutch_n"]) == [2, 0, 5, 5, 1, 3, 3, 5, 5]
+        assert [bool(v) for v in b.loc[b["clutch_n"] > 0, "clutch_won"]] == [False] * 3 + [True] + [False] * 4  # round 5: a 1v1 won
+        flags_a = [f for row in a["flags"] for f in json.loads(row)]
+        assert flags_a.count("won_opening") == 8 and flags_a.count("postplant_won") == 5
+        assert flags_a.count("team_flash") == 7 and flags_a.count("full_buy_no_plant") == 1
+
+        # per player: the box-score numbers add up to the game's own scoreboard
+        totals = stats.groupby("steamid")[["kills", "died", "assists", "damage"]].sum()
+        for steamid, (k, d, a_, dmg) in SCOREBOARD.items():
+            assert tuple(int(v) for v in totals.loc[steamid]) == (k, d, a_, dmg), steamid
+        duels = stats.groupby("steamid")[["kast", "opening_kill", "opening_death", "trade_kills", "was_traded"]].sum()
+        for steamid, expected in DUELS.items():
+            assert tuple(int(v) for v in duels.loc[steamid]) == expected, steamid
+
+        report = format_report(engine, "public_test")
+        assert "KAST and opening duels" in report and "team A won 8 of 9 opening duels" in report
+
+        # ---- Phase 3: the digest ------------------------------------------------
+        digest, tokens = build_digest(engine, "public_test")
+        again, tokens_again = build_digest(engine, "public_test")
+        assert to_json(digest) == to_json(again) and tokens == tokens_again  # deterministic
+        Digest.model_validate(digest)
+        assert tokens < 10_000 and "dropped" not in digest
+        assert digest["match"]["final_score"] == "8-2" and len(digest["rounds"]) == 9
+        assert digest["team"]["opening_duels"] == {"won": 8, "n": 9, "pct": 89}
+        assert digest["team"]["trade_rate"] == {"won": 5, "n": 22, "pct": 23}
+        assert sum(p["k"] for p in digest["players"]) == 41  # team A's kills on the scoreboard
+        r2 = digest["rounds"][1]
+        assert r2["result"] == {"won": False, "how": "bomb_defused", "length_s": 70, "alive": "0v2", "clutch": "123 1v2"}
+        assert r2["bomb"] == {"site": "A", "t": 41, "by": "Подсосник blick'a", "alive": "2v2", "outcome": "defused"}
+        assert r2["kills"][0]["opening"] and r2["kills"][0]["traded"] is False
+        with engine.connect() as conn:
+            from sqlalchemy import text
+            stored = conn.execute(text("SELECT COUNT(*) FROM round_summaries WHERE match_id = 'public_test'")).scalar_one()
+            stored_digest = conn.execute(text("SELECT json FROM match_digests WHERE match_id = 'public_test'")).scalar_one()
+        assert stored == 9 and stored_digest == to_json(digest)
+
+        # ---- Phase 4: the report prompt fits, and a valid answer passes the checks ----
+        from cs2review.llm import estimate_tokens
+        from cs2review.report import build_prompts, round_lengths, validate_report
+        system, user = build_prompts(digest)
+        assert estimate_tokens(system + user) < 10_000
+        lengths = round_lengths(digest)
+        assert lengths == {1: 112, 2: 70, 3: 70, 4: 45, 5: 53, 6: 92, 7: 71, 8: 76, 9: 39}
+        answer = {
+            "worked": [{"title": "w", "rounds": [1], "why": "y"}] * 3,
+            "problems": [{"title": "p", "rounds": [2, 5], "why": "y", "fix": "f"}] * 3,
+            "rewatch": [{"round": 2, "t": 21, "why": "y"}] * 5,
+            "practice": "trade",
+        }
+        assert validate_report(json.dumps(answer), lengths)[1] == []
+
+        # ---- Phase 5: trends and the evaluation SQL on real data ---------------
+        from cs2review.ask import run_sql
+        from cs2review.trends import compute_trends
+        trends = compute_trends(engine, "de_mirage")
+        t_side = trends["maps"]["de_mirage"]["sides"]["T"]
+        assert t_side["rounds"] == {"won": 7, "n": 9, "pct": 78}
+        assert t_side["opening_duels"] == {"won": 8, "n": 9, "pct": 89}
+        assert t_side["trades"] == {"won": 5, "n": 22, "pct": 23}
+        assert t_side["after_5v4_up"] == {"won": 7, "n": 8, "pct": 88}
+        db_file = Path(tmp) / "test.sqlite"
+        assert run_sql(db_file, "SELECT COUNT(*) FROM our_rounds")["rows"] == [[9]]
+        assert "error" in run_sql(db_file, "DELETE FROM kills")
+        sys.path.insert(0, str(Path(__file__).parent))
+        from eval_ask import expected_value, load_questions
+        for q in load_questions():
+            assert expected_value(db_file, q["sql"]) is not None, q["id"]
+
+        # ---- Phase 6: play labels with the draft Mirage zones --------------------
+        from cs2review.config import Config
+        from cs2review.plays import build_plays, coverage
+        cfg = Config(maps_dir=Path(__file__).resolve().parents[1] / "maps", manual_labels_path=Path(tmp) / "labels.json")
+        plays, zones, created = build_plays(engine, "public_test", cfg)
+        assert not created and zones.map == "de_mirage"
+        t_plays = plays[plays["side"] == "T"].sort_values("round")
+        assert list(t_plays["label"]) == ["slow", "slow", "default", "unknown", "unknown", "split", "slow", "split", "unknown"]
+        assert list(t_plays["site"].fillna("-")) == ["B", "A", "-", "B", "-", "A", "A", "B", "-"]
+        ct_plays = plays[plays["side"] == "CT"].sort_values("round")
+        assert set(ct_plays["label"]) == {"standard"}
+        assert json.loads(ct_plays.iloc[0]["features"])["setup_20s"] == "A1-B2-CT2"
+        assert coverage(engine, "de_mirage") == {"t_rounds": 9, "labelled": 6, "pct": 67, "manual": 0}
+        digest, _ = build_digest(engine, "public_test")
+        assert [r.get("play") for r in digest["rounds"]] == [
+            "slow B", "slow A", "default", None, None, "split A", "slow A", "split B", None]
+
+        # ---- Phase 7: the same demo treated as a pro demo gives two cards --------
+        from sqlalchemy import text as sql_text
+        from cs2review.playbook import build_playbook
+        with engine.begin() as conn:
+            conn.execute(sql_text("UPDATE matches SET source_kind = 'pro', us_team = NULL"))
+        cfg.playbook_status_path = Path(tmp) / "status.json"
+        cards = build_playbook(engine, cfg).sort_values("site")
+        assert list(cards["title"]) == ["A split: utility on Catwalk, SnipersNest", "B split: utility on Catwalk, SnipersNest"]
+        assert list(cards["seen"]) == [1, 1] and set(cards["source_kind"]) == {"pro"}
+        steps = json.loads(cards.iloc[0]["card"])["steps"]
+        assert [s["do"] for s in steps] == ["molotov", "molotov", "enter", "enter", "enter", "plant"]
+        assert steps[0]["lineup"].startswith("setpos ") and json.loads(cards.iloc[0]["card"])["examples"][0]["round"] == 6
         engine.dispose()
 
 

@@ -14,3 +14,41 @@ team_steam_ids = [
 inbox_dir = "inbox"                 # drop downloaded demos here
 demos_dir = "demos"                 # unpacked .dem files are kept here
 db_path = "data/cs2review.sqlite"   # the database
+
+# How a team's buy is named in each round (Phase 2). Defaults shown; they are
+# a starting point. Run `python -m cs2review.metrics --buy-histogram` to see
+# your matches and tune them. Gear value is scaled to five players.
+[buy_types]
+pistol_max_money = 1000   # pistol round: every player started with this or less
+eco_below = 5000          # team gear value below this: eco
+full_from = 20000         # from this: full buy; in between: semi
+
+# The language model that writes reports (Phase 4). The API key is NOT set
+# here: put it in the ANTHROPIC_API_KEY environment variable. With
+# provider = "manual" the tool writes the prompt to out/ and you paste it
+# into any chat app, which costs nothing.
+[llm]
+provider = "anthropic"            # or "manual"
+model = "claude-haiku-5-5"        # cheapest; check the current id in the Claude docs
+max_cost_usd_per_run = 0.25       # hard stop for one command
+price_in_per_mtok = 0.10          # USD per million tokens, used only for cost logging
+price_out_per_mtok = 0.50         # (Claude pricing page, 2026-11-14)
+# effort = "low"                  # optional: low / medium / high
+
+# Play detection (Phase 6). Zone files live in maps/<map>.toml.
+# maps_dir = "maps"
+# manual_labels_path = "data/manual_plays.json"   # the IGL's labels: back this up
+[plays]
+rush_before_s = 25.0          # rush: site hit before this
+execute_hit_within_s = 15.0   # execute: site hit this soon after a smoke/molotov wave
+default_no_hit_before_s = 40.0
+slow_no_hit_before_s = 60.0
+review_below = 0.6            # `plays review` shows labels less sure than this
+
+# Weekly web scout (Phase 8). $10 per 1,000 searches plus tokens.
+[scout]
+max_searches_per_map = 5
+max_searches_per_run = 20
+recent_days = 60
+tool_type = "web_search_20250305"   # web_search_20260209 needs Sonnet 4.6 / Opus 4.6 or newer
+check_urls = true                    # open each link before keeping a finding

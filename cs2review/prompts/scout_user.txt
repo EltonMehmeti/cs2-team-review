@@ -1,0 +1,1 @@
+Find up to 5 recent, concrete plays for {map} in Counter-Strike 2: pro executes, splits, fakes, CT setups or new lineups, from strategy articles or videos. Use at most {max_searches} searches.

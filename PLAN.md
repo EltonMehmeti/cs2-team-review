@@ -6,20 +6,22 @@ finds the team's recurring mistakes, tracks the plays the team runs, and
 suggests new plays with examples.
 
 This document is written for the agent (or person) who implements the rest.
-Phase 1 is built and tested. Phases 1.5 to 9 are specified below.
+Phases 1 to 3 are built and tested; Phases 4 to 9 are built and wait for the
+owner's key, webhook, real matches, pro demos, zone review and checks
+(see each phase's "What was built" note). Phase 1.5 is specified below.
 
 | Phase | What | Status |
 |---|---|---|
 | 1 | Demo files in, SQLite tables out, self-check | Done, tested |
-| 1.5 | Validate on the owner's real FACEIT demos, on Windows | To do first |
-| 2 | Team metrics and round flags (no AI) | To do |
-| 3 | Round summaries and match digest (the AI's input) | To do |
-| 4 | Match report written by an LLM, posted to Discord | To do |
-| 5 | Trends across matches and a question-answering agent | To do |
-| 6 | Play detection: which plays the team runs | To do |
-| 7 | Playbook from opponents and pro demos, with lineups | To do |
-| 8 | Web scout: recent plays from articles and videos | To do |
-| 9 | Weekly suggestions and feedback loop | To do |
+| 1.5 | Validate on the owner's real FACEIT demos, on Windows | To do (needs the owner's PC and demos) |
+| 2 | Team metrics and round flags (no AI) | Done, tested on the public demo |
+| 3 | Round summaries and match digest (the AI's input) | Done, tested on the public demo |
+| 4 | Match report written by an LLM, posted to Discord | Built and tested with a fake model; needs the owner (see Phase 4) |
+| 5 | Trends across matches and a question-answering agent | Built and tested with a fake model; needs real matches and a key |
+| 6 | Play detection: which plays the team runs | Built and tested; needs zone review, 10 real matches and the IGL |
+| 7 | Playbook from opponents and pro demos, with lineups | Built and tested; needs 5 pro demos and a lineup test |
+| 8 | Web scout: recent plays from articles and videos | Built and tested with a fake model; needs a key for a real run |
+| 9 | Weekly suggestions and feedback loop | Built and tested; needs real matches and cards |
 | 10 | Optional: web UI, automation | Later |
 
 Update this table as phases are finished.
@@ -114,8 +116,37 @@ cs2review/
   ingest.py        CLI: read demos from inbox/ into the database
   check.py         CLI: scoreboard + self-check against the demo's own totals
   debug_rounds.py  CLI: print the raw round events of a demo
+  metrics.py       Phase 2: team_rounds, player_round_stats, kill columns
+  summaries.py     Phase 3: round summaries, match digest, pydantic models
+  digest.py        CLI: print or save the digest of a match
+  llm.py           Phase 4: the only module that talks to a model (anthropic, manual, fake)
+  report.py        Phase 4: CLI: match report, checked and rendered by code
+  notify.py        Phase 4: post to a Discord webhook
+  trends.py        Phase 5: CLI: trends across matches (MIN_N honesty rule)
+  trend_report.py  Phase 5: weekly trend report by the LLM, evidence checked by code
+  ask.py           Phase 5: CLI: question agent with a read-only run_sql tool
+  zones.py         Phase 6: maps/<map>.toml zone files (CLI: check or draft)
+  mapview.py       Phase 6: CLI: PNG of a map coloured by zone, to review a zone file
+  plays.py         Phase 6: CLI: play features, labels, manual review, coverage
+  playbook.py      Phase 7: CLI: cards from opponents' and pro rounds, statuses, beat-us
+  scout.py         Phase 8: CLI: web scout with Claude's web search tool, checked links
+  suggest.py       Phase 9: CLI: weakness tags, three plays to try, feedback
+  weakness_tags.toml  Phase 9: one SQL condition per weakness tag
+  prompts/         prompt text files
+maps/
+  de_mirage.toml   draft zones from this plan (reviewed = false)
 tests/
   test_rounds.py        unit tests, no demo needed
+  test_metrics.py       Phase 2 unit tests, no demo needed
+  test_summaries.py     Phase 3 unit tests, no demo needed
+  test_report.py        Phase 4 unit tests, fake model, no network
+  test_trends_ask.py    Phase 5 unit tests on a synthetic database (fixtures.py)
+  eval_questions.yaml   Phase 5: 10 questions with SQL answers
+  eval_ask.py           Phase 5: run the agent on them (real model, not in the suite)
+  test_plays.py         Phase 6 unit tests, hand-made positions on Mirage zones
+  test_playbook.py      Phase 7 unit tests
+  test_scout.py         Phase 8 unit tests, fake search, no network
+  test_suggest.py       Phase 9 unit tests
   test_integration.py   end-to-end test on a public demo (skips if missing)
 ```
 
@@ -196,6 +227,12 @@ All of this was observed by running demoparser2 0.42.2 on a real demo.
   window therefore ends at `cs_win_panel_match`.
 - Kills can happen after `round_end` and before the next `round_start`. They
   count on the scoreboard. We keep them with `after_round_end = 1`.
+- A kill on the same tick as `round_end` (the last kill of an elimination
+  round) has `after_round_end = 0`. So does a death from the bomb exploding.
+- **The bomb can be planted after the round ended.** In round 3 of the test
+  demo the last CT died at 70.3 s and the bomb was planted at 76.5 s.
+  `rounds.bomb_planted` and `rounds.plant_site` (Phase 1) include such
+  plants; `team_rounds.planted` (Phase 2) ignores any plant after `end_tick`.
 
 **Scoreboard rules that match the game exactly**
 
@@ -253,8 +290,16 @@ the demoparser2 repository; see tests/test_integration.py):
   150 grenades (48 flash, 40 smoke, 34 HE, 28 molotov), 72 blinds,
   10 bomb events, 4533 position rows.
 - 62 kills happen before the round ends. With a 5-second trade window,
-  9 deaths are traded.
+  9 deaths are traded. (Counting a same-tick answer as a trade or not
+  changes nothing here: also 9.)
 - Side of the opening killer in rounds 1 to 9: T, CT, T, T, T, T, T, T, T.
+- Phase 2 (all in tests/test_integration.py): 18 `team_rounds`, 90
+  `player_round_stats`. Buy types team A: pistol, semi, semi, full x6;
+  team B: pistol, eco, full, eco, semi, full, semi, eco, semi. Team A plants
+  in rounds 1, 2, 4, 6, 7, 8. Clutches (1vN): A 1v2 in round 2 and 1v3 in
+  round 5 (both lost); B in 8 rounds, only the 1v1 in round 5 won. Per
+  player sums of kills, deaths, assists and damage in `player_round_stats`
+  equal the game's scoreboard exactly.
 
 ---
 
@@ -275,11 +320,13 @@ Keep these unless there is a strong reason; if you change one, write why.
 | Area names, not coordinates, for the LLM | "Jungle" means something to a model and a player; `-1162, -870` does not |
 | LLM sees summaries, never raw rows | Cost, and models miscount long lists |
 
-**Schema versioning (do this at the start of Phase 2).** Add a `meta` table
-with `schema_version`. `ingest` and every other command compare it with a
-constant in `db.py`; on mismatch they stop and print: "The database was made
-by an older version. Delete data/cs2review.sqlite and run
-`python -m cs2review.ingest` again."
+**Schema versioning (done in Phase 2).** A `meta` table holds the key
+`schema_version`. `db.get_engine` compares it with `SCHEMA_VERSION` in
+`db.py`, so `ingest`, `check` and `metrics` all refuse an old database and
+print: "The database was made by an older version. Delete
+data/cs2review.sqlite and run `python -m cs2review.ingest` again." A Phase 1
+database (no `meta` table) counts as old. Version 2 = Phase 2. Bump it on
+every table change.
 
 ### Existing tables (see db.py for every column)
 
@@ -296,6 +343,17 @@ by an older version. Delete data/cs2review.sqlite and run
 | `bomb_events` | plant, defuse, explode |
 | `positions` | living player per second: x, y, z, area, health |
 | `map_places` | grid cell per map: area name (grows with every demo) |
+| `team_rounds` | team per played round: buy, opening, trades, advantage, clutch, utility, plant, flags (Phase 2) |
+| `player_round_stats` | player per played round: K, D, A, damage, KAST, openings, trades (Phase 2) |
+| `round_summaries` | played round: compact JSON from our point of view (Phase 3) |
+| `match_digests` | match: the digest JSON and its token estimate (Phase 3) |
+| `llm_calls` | every model call: provider, model, purpose, tokens, cost (Phase 4) |
+| `reports` | match or trend report (`kind`): model JSON, rendered Markdown, tokens, cost (Phase 4, 5) |
+| `our_rounds`, `our_player_rounds`, `our_kills` | views: only our team (Phase 5) |
+| `round_plays` | team per played round: play label, site, confidence, features JSON, name, rule/manual (Phase 6) |
+| `playbook` | play card: signature, seen/won, difficulty, status, stale, card JSON (Phase 7, web cards Phase 8) |
+| `zone_areas` | copy of the zone files for SQL (refilled before weakness tags run; Phase 9) |
+| `meta` | `schema_version` |
 
 ---
 
@@ -432,6 +490,42 @@ flash_assists, enemies_blinded, teammates_blinded, utility_damage`.
 for every match; `check --all` still passes; a new section in the check
 output prints KAST and opening duels per player for one match.
 
+**What was built and measured (Phase 2, 2026-11-14).** All four "Done when"
+items hold on the public test demo. `check` now also fails when a match has
+no metrics or an invariant breaks, so `check --all` proves "filled for every
+match" on the owner's database too. 29 unit tests in `tests/test_metrics.py`,
+golden numbers in `tests/test_integration.py`. Metrics take about 1 second
+per match. Decisions made while building, beyond the rules above:
+
+- Two kinds of counting. How the round went (openings, trades, alive counts,
+  advantage, clutches, `team_rounds.kills` / `deaths`) uses only kills with
+  `after_round_end = 0`, as the rules say. A player's own `kills`, `died`,
+  `assists`, `damage` and `headshot_kills` in `player_round_stats` count like
+  the scoreboard (also after the round ended), so they add up to it.
+  `survived` means alive when the round ended, so a player killed after the
+  round has `died = 1` and `survived = 1`.
+- Same-tick deaths (one HE, two victims): alive counts, advantage and clutch
+  are read after all deaths of that tick. Both kill rows show the same
+  `t_alive_after` / `ct_alive_after`.
+- A trade needs `0 <= answer time - death time <= TRADE_WINDOW_S` (5 s
+  counts) and the victim himself cannot trade his own death.
+- `untraded_deaths` counts only deaths to an enemy; a suicide, fall or bomb
+  death is in `deaths` but cannot be traded. So `traded + untraded <= deaths`.
+- `best_advantage` / `worst_disadvantage` include the start of the round
+  (normally 0), so a round without kills has 0 / 0.
+- `clutch_n` is 0 when there was no clutch; `clutch_won` is then empty, so
+  `AVG(clutch_won)` in SQL is the clutch win rate.
+- A clutch needs an enemy alive *after* the tick: if the last enemy dies on
+  the same tick, there is no clutch.
+- Extra columns: `team_rounds.opening_traded` (our opening death was traded;
+  used by `opening_death_untraded`) and `postplant_s` (plant to round end).
+- Grenade counts leave out grenades thrown after the round ended (none in
+  the test demo). Utility damage counts like damage (whole round window).
+- `multi_kill` is the number of kills when 2 or more, else 0.
+- Not checked against real FACEIT demos yet (Phase 1.5), and the buy-type
+  thresholds are still the defaults: the owner should look at
+  `python -m cs2review.metrics --buy-histogram` on real matches.
+
 ### Phase 3: round summaries and the match digest
 
 **Goal.** Produce the compact text an LLM reads. Deterministic, no AI.
@@ -494,6 +588,35 @@ and the digest in `match_digests` (`match_id, json, token_estimate`).
 **Done when.** Digest for the test demo is valid against a pydantic model,
 under budget, and identical on two runs. A unit test builds a summary from a
 hand-made round and compares it with an expected JSON.
+
+**What was built and measured (Phase 3, 2026-11-14).** All "Done when"
+items hold. The test demo's digest is about 4,800 tokens for 9 rounds, so a
+full 24-round match should land near 11,000 to 12,000 tokens before
+dropping fields; the drop steps exist for that and are unit-tested. Ingest
+builds the digest for every match (schema version 3), and
+`python -m cs2review.digest MATCH_ID --pretty` prints it. Decisions:
+
+- The digest is built with fixed key order and `json.dumps(...,
+  separators=(",", ":"))`, so it is byte-for-byte the same on every run.
+- `kills` in a round summary leave out kills after the round ended (they
+  change nothing about the round). Player K/D/A in `players` still count
+  like the scoreboard.
+- An enemy keeps his name ("enemy Xavi") once he has 3 or more opening
+  kills in the match (`NAMED_ENEMY_MIN_OPENINGS`). Dropping "enemy details"
+  turns those back into "enemy" and removes `enemy_utility`.
+- A kill carries `traded` for every one of our deaths to an enemy (true or
+  false) and for enemy deaths only when true; `trade: true` marks our kill
+  that avenged a teammate. `killer: "world"` is the bomb, a fall or the map.
+- Flashes keep `enemies_blinded` even when 0 (a wasted flash is worth
+  knowing); `mates_blinded` appears only when above 0. Only smokes keep
+  `from`. Decoys are left out.
+- `setup_20s` is left out when the round lasted less than 20 seconds.
+- `result.clutch` names our clutch player ("Ann 1v3"); an enemy clutch shows
+  only when we had none ("enemy 1v2").
+- Rates are `{"won", "n", "pct"}` so the model never divides.
+  `trade_rate.n` counts only deaths to an enemy.
+- `match.date` stays empty: the demo has no date (Phase 10 can add it from
+  the FACEIT API).
 
 ### Phase 4: the match report
 
@@ -571,6 +694,37 @@ one and report back. If they differ, find the offset and document it.
 is logged and under the cap; the owner checks three claims in the demo and
 they hold; `--provider manual` works end to end; `--post` reaches Discord.
 
+**What was built (Phase 4, 2026-11-14).** Everything above is in place and
+tested with a fake model (15 unit tests in `tests/test_report.py`); no real
+model was called. `--provider manual` works end to end in the tests and was
+run on the test demo: the prompt is about 6,000 tokens. Still open, all
+needing the owner: an `ANTHROPIC_API_KEY` (or the choice to stay manual), a
+report for a real match, three claims checked in the demo, a
+`DISCORD_WEBHOOK_URL` for `--post`, and the `demo_gototick` check.
+Decisions:
+
+- `llm.py` has three providers: `anthropic` (official SDK, imported only
+  when used), `manual`, and `fake` for tests. It uses structured outputs
+  (`output_config.format` with a JSON schema) and checks `stop_reason`
+  for `refusal` and `max_tokens` before reading the answer. Claude Haiku 5.5
+  has no server-side refusal fallback; a refusal fails the command.
+- The schema sent to the model has no item counts (not every provider
+  supports `minItems`); `report.py` checks the counts, the rounds, the
+  2-round rule for problems and every `t`. One retry with the list of
+  problems, then a loud failure. Nothing unchecked is stored or posted.
+- The cost cap is checked before each call with the worst case (whole
+  prompt plus `max_tokens` of output). Prompts over 50,000 tokens are
+  refused. Every call is logged to `llm_calls`; manual and fake calls cost 0.
+- Manual mode: the first run writes `out/prompt_<match>.md` and stops; the
+  second run reads `out/answer_<match>.json` (```json fences and chatter
+  around the JSON are fine). A bad answer produces
+  `out/prompt_<match>_retry.md` with the problems listed.
+- Discord posts send `allowed_mentions: {"parse": []}`, so text from a model
+  can never ping `@everyone`. Messages split at line breaks under 2,000
+  characters. Only the standard library is used for the webhook.
+- Rewatch lines start 5 seconds before the moment and never before the
+  round went live: `tick = freeze_end_tick + max(t - 5, 0) * tick_rate`.
+
 ### Phase 5: trends and the question agent
 
 **Goal.** Patterns across many matches, and free-form questions.
@@ -613,6 +767,38 @@ A script runs the agent and compares the numbers. Target: 8 of 10.
 **Done when.** Trends print for a map with real data; the evaluation
 reaches the target; a destructive query (`DROP TABLE`, `DELETE`) is refused,
 with a test proving it.
+
+**What was built (Phase 5, 2026-11-14).** The refusal of destructive
+queries is proven by tests (word check and, separately, the read-only
+connection). Trends print for the public test demo and for a synthetic
+3-match database in the tests (`tests/fixtures.py`). Still open: trends on
+the owner's real matches, and running `python tests/eval_ask.py` with an API
+key to measure the 8-of-10 target (record the score and model here).
+Decisions:
+
+- Views `our_rounds`, `our_player_rounds` and `our_kills` (with `by_us` /
+  `of_us`) are created by `get_engine`; schema version 5. `--last N` orders
+  matches by `matches.file_time` (the demo has no date), then ingest time.
+- `MIN_N = 8`: a rate from fewer rounds prints "not enough data (n=5)" and
+  has `pct: null` in the JSON. n is always shown.
+- "5v4 up" / "4v5 down" use only rounds where both teams started with five
+  players. Pistol conversion counts the next two rounds on the same side.
+- The weekly trend report (`trends --report`) cannot cite rounds, so each
+  claim cites evidence paths into the trend data (`de_mirage.T.trades`). The
+  code checks every path exists and has n >= 8, and prints the numbers
+  itself; the model is told not to write numbers. Stored in `reports` with
+  `kind = 'trends'`.
+- `run_sql`: one statement, must start with SELECT or WITH, a list of
+  writing keywords is refused with a clear message, `LIMIT 200` is added
+  when missing, and the connection is opened with `mode=ro` plus
+  `PRAGMA query_only`, so SQLite itself refuses writes. A progress handler
+  stops queries after 5 seconds. Results over 20,000 characters are cut.
+- The agent gets the schema in its system prompt (saves a tool call) and
+  may still call `describe_schema`. At most 8 tool calls: after the 8th the
+  model is told to answer; if it asks for tools again the loop stops.
+- The evaluation compares numbers in the answer (percentages may be off
+  by 1) or the expected player name. The default model is Claude Haiku
+  5.5; if it misses the target, try a stronger model and record it here.
 
 ### Phase 6: play detection
 
@@ -686,6 +872,40 @@ than `unknown`, and on a sample of 30 rounds the in-game leader agrees with
 80% of the labels. Record the measured numbers here. If the target is
 missed, tune the rules with the owner before moving on.
 
+**What was built and measured (Phase 6, 2026-11-14).** Steps 1 to 5 are in
+place: `maps/de_mirage.toml` (the draft above, `reviewed = false`; it covers
+all 23 areas seen in the test demo), `zones` and `mapview` CLIs, features
+and labels in `round_plays` (ingest runs them), `plays review`, `play` in
+round summaries and `by_play` in trends. 14 unit tests. Measured on the one
+public demo (not the target set): 6 of 9 T rounds labelled (67%): slow 3,
+split 2, default 1, unknown 3. The unknowns are rounds won by eliminations
+before any site hit, and one plant on B that the site-hit rule missed. Not
+measured yet: the 10 real matches and the IGL's agreement. Decisions:
+
+- A "site hit" uses the `[sites]` areas (BombsiteA), not the broad zone
+  A, which also holds TRamp and Palace: being in Palace is not a hit.
+  "Execute" and "fake" compare the wave's landing zone with the site's
+  zone (`site_zone`).
+- `default` needs no site hit for 40 s *and* the round to last that long;
+  `slow` needs 60 s the same way. A round that ends at 35 s with no hit
+  is `unknown`, not `slow`.
+- Entry zones ignore areas in no zone. With the draft zones a Palace + Ramp
+  split counts one zone (both are A); the feature JSON keeps the exact
+  areas (`entry_areas`) for tuning.
+- CT labels are `stack` (4+ CTs in a site's zone at 20 s), `aggression`
+  (a CT in zone T before 25 s) and otherwise `standard`. CT features keep
+  `setup_20s` and `rotation_s`.
+- Confidence is a fixed guess per label (rush/execute 0.8, split 0.7,
+  others 0.5, unknown 0). `plays review` shows our rule labels below 0.6.
+- Manual labels live in `data/manual_plays.json`, outside the database, and
+  are merged in every time the plays are rebuilt, so deleting the database
+  keeps them. The file is git-ignored with the rest of `data/`; the owner
+  should back it up (or decide to commit it).
+- A map without a zone file gets a draft with every observed area under
+  `unassigned` and bomb sites guessed from the area names; it is never
+  overwritten. Until the zones are sorted, labels on that map are weak.
+- All thresholds are in `[plays]` of `config.toml`.
+
 ### Phase 7: the playbook (opponents and pro demos)
 
 **Goal.** A library of plays with evidence and examples.
@@ -740,6 +960,35 @@ complete steps and commands; a "teams that beat us" list exists for the
 owner's maps; the owner reproduces one smoke from a card and reports how
 close it lands.
 
+**What was built (Phase 7, 2026-11-14).** `matches.source_kind`,
+`ingest --kind pro` (default folder `pro_inbox/`, no "us" for pro demos),
+`python -m cs2review.playbook build|list|show|status|beat-us`, and
+`plays status` as the plan names it. The test demo, treated as a pro demo,
+gives 2 cards (A split and B split). 5 unit tests plus that golden check.
+Still open: 5 real pro demos of one map, the owner's lineup test, and
+"teams that beat us" on real matches (it needs lost matches). Decisions:
+
+- The signature uses the play's own utility wave: for an execute the wave
+  on the hit site's zone, for a fake the wave on the other site, for a
+  split the last smoke/molotov wave before the hit (`plays.play_wave`).
+  Landing areas are de-duplicated and sorted. A split without such a wave
+  gets an empty area list, so all of them on one site form one card.
+- Groups come from every candidate round (won or lost); a group becomes a
+  card when it was won at least once, and seen/won count all its rounds.
+  Our own rounds never become cards.
+- Steps come from the most recent won round: roles P1..P5 in order of first
+  action, the wave's smokes/molotovs with `from`, `to`, lineup and throw
+  type, the attackers in the site at the hit with the area they came
+  `via`, and the plant. Up to 3 examples with `playdemo ...;
+  demo_gototick ...` (5 seconds before the wave, as in Phase 4).
+- Difficulty: a standing smoke/molotov counts 1, a jump or running throw
+  counts 2 instead, plus 1 if any two land within 2 seconds. (The plan's
+  sentence allowed "2 extra"; "2 instead" keeps easy plays easy.)
+- Statuses live in `data/playbook_status.json` keyed by card id (a hash of
+  the signature), so a rebuild keeps them. A card is `stale` when its last
+  sighting is before `last_map_update` in the map's zone file.
+- Card pictures (optional) are not built.
+
 ### Phase 8: the web scout
 
 **Goal.** Recent ideas from articles and videos, always with a link.
@@ -770,6 +1019,34 @@ close it lands.
 **Done when.** A run yields at least 3 sourced candidates for a map, every
 URL opens, cost is logged and under the cap.
 
+**What was built (Phase 8, 2026-11-14).** `python -m cs2review.scout
+[--map X]`, tested with a fake search (8 unit tests); no real search was
+run. Still open: a real run with `ANTHROPIC_API_KEY` to check the 3
+candidates, the links and the cost. The optional YouTube step (Gemini) is
+not built: only if the owner asks. Decisions:
+
+- `llm.py` gained `LLM.search()`: the server-side web search tool with
+  `max_uses` set to the per-map limit, a `pause_turn` loop, the result URLs
+  collected from `web_search_tool_result` blocks, and cost = tokens +
+  searches x `price_per_search`. The cap check counts the worst case
+  (all searches used). `llm_calls.searches` logs them (schema version 8).
+- The default tool is `web_search_20250305`: the newer
+  `web_search_20260209` (dynamic filtering) is documented for Sonnet 4.6 /
+  Opus 4.6 and newer, not for Haiku 5.5. Change `[scout] tool_type` when
+  using a stronger model.
+- No structured outputs here: search answers carry citations, which do not
+  combine with `output_config.format`. The model returns JSON in its text;
+  the code parses and checks it.
+- A finding is kept only if its URL was returned by the search tool (an
+  invented link is dropped), the URL opens (a GET, unless `check_urls =
+  false`), the map matches, the side is T or CT, the site A, B or none, and
+  it has steps. Titles and steps are cut to 300 characters, at most 12
+  steps: the text comes from strangers.
+- Web cards are stored in `playbook` with `source_kind = 'web'`,
+  `needs_review = 1`, no lineups, `seen = won = 0`; a playbook rebuild from
+  demos does not delete them. `stale` compares `published` with
+  `last_map_update`.
+
 ### Phase 9: suggestions and the feedback loop
 
 **Goal.** Each week: "three plays to try", chosen for this team, and proof
@@ -793,6 +1070,38 @@ later of whether they worked.
 **Done when.** A weekly post is generated from real data; statuses can be
 changed; after the team runs a suggested play in 3 or more rounds, trends
 show its result.
+
+**What was built (Phase 9, 2026-11-14).** `python -m cs2review.suggest
+[--post] [--dry-run] [--feedback]`, `cs2review/weakness_tags.toml`, a
+"plays we are trying" section in trends. 7 unit tests on the synthetic
+database. Statuses can be changed (`plays status` / `playbook status`).
+Still open: a weekly post from real data and a suggested play run 3+ times
+by the team. Decisions:
+
+- Seven tags to start: a_hits_failing, b_hits_failing (execute/split/rush
+  on a site under 35%), openings_lost_mid (40%+ of our T opening deaths in
+  Mid), t_side_losing (T under 45%), retake_a_weak, retake_b_weak (under
+  35%), force_buys_losing (semi buys under 25%). All need n >= 8. Each
+  returns `map, n, rate`. `zone_areas` (schema version 9) is refilled
+  from the zone files before they run, so SQL can ask about zones. Tags
+  are a starting point for the owner to tune.
+- Score = fit (3 on the tag's site, 1.8 on the side only) + evidence
+  (2 x won / seen when seen >= 3) + ease (1 - difficulty / 10) + freshness
+  (1 within 30 days, 0.5 within 90, 0.2 older, 0.3 unknown). Skipped:
+  stale, dropped, trying, adopted, and unreviewed web cards.
+- When no tag has enough data, the best-evidenced cards on our maps are
+  suggested, and the post says so. The suggestions are rules, not AI, so
+  they cost nothing; the post is stored in `reports` (`kind =
+  'suggestions'`) and new cards become `suggested`.
+- Statuses now store the date they were set
+  (`{"status": "trying", "since": "2026-11-14"}` in
+  `data/playbook_status.json`; old plain strings still load). Feedback
+  counts our rounds since that date that match the card's signature (our
+  own execute/split/fake rounds), or that the IGL named after the card
+  (its id or title) in `plays review`, on the card's map. A web card can
+  only be matched by name.
+- CT cards do not exist yet (the playbook holds T plays), so CT tags such
+  as retake_b_weak find no card today.
 
 ### Phase 10: optional extras
 

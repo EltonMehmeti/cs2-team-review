@@ -44,3 +44,11 @@ execute_hit_within_s = 15.0   # execute: site hit this soon after a smoke/moloto
 default_no_hit_before_s = 40.0
 slow_no_hit_before_s = 60.0
 review_below = 0.6            # `plays review` shows labels less sure than this
+
+# Weekly web scout (Phase 8). $10 per 1,000 searches plus tokens.
+[scout]
+max_searches_per_map = 5
+max_searches_per_run = 20
+recent_days = 60
+tool_type = "web_search_20250305"   # web_search_20260209 needs Sonnet 4.6 / Opus 4.6 or newer
+check_urls = true                    # open each link before keeping a finding

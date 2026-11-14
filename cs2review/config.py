@@ -36,6 +36,20 @@ class LLMSettings:
 
 
 @dataclass
+class ScoutSettings:
+    """[scout] in config.toml: the weekly web scout (Phase 8)."""
+
+    max_searches_per_map: int = 5
+    max_searches_per_run: int = 20
+    recent_days: int = 60  # ask for articles and videos from the last this many days
+    # Claude's web search tool version. web_search_20260209 (dynamic filtering)
+    # needs Sonnet 4.6 / Opus 4.6 or newer; the basic version works more widely.
+    tool_type: str = "web_search_20250305"
+    price_per_search: float = 0.01  # USD ($10 per 1,000 searches on 2026-11-14), for cost logging
+    check_urls: bool = True  # open every URL before keeping a finding
+
+
+@dataclass
 class PlayRules:
     """[plays] in config.toml: thresholds of the play labels (PLAN.md, Phase 6)."""
 
@@ -80,6 +94,8 @@ class Config:
     manual_labels_path: Path = Path("data/manual_plays.json")
     # play detection thresholds ([plays] in config.toml)
     plays: PlayRules = field(default_factory=lambda: PlayRules())
+    # the web scout ([scout] in config.toml)
+    scout: ScoutSettings = field(default_factory=lambda: ScoutSettings())
 
 
 def load_config(path: str | Path = "config.toml") -> Config:
@@ -113,4 +129,7 @@ def load_config(path: str | Path = "config.toml") -> Config:
     for key, value in raw.get("plays", {}).items():
         if hasattr(cfg.plays, key):
             setattr(cfg.plays, key, type(getattr(cfg.plays, key))(value))
+    for key, value in raw.get("scout", {}).items():
+        if hasattr(cfg.scout, key):
+            setattr(cfg.scout, key, type(getattr(cfg.scout, key))(value))
     return cfg

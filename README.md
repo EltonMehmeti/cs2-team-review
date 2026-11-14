@@ -108,6 +108,7 @@ knife round or a restart that was counted as a real round.
 | `python -m cs2review.ingest --kind pro` | read pro demos you downloaded by hand into `pro_inbox/` |
 | `python -m cs2review.playbook build` then `list` / `show <id>` | play cards from opponents and pros, with lineups and demo examples |
 | `python -m cs2review.playbook beat-us` | teams that beat us, per map |
+| `python -m cs2review.scout --map de_mirage` | weekly: recent plays from articles and videos, each with a working link (needs `ANTHROPIC_API_KEY`, a few cents) |
 | `python -m cs2review.debug_rounds X` | show the raw round events of a demo |
 
 ## Words used in the database

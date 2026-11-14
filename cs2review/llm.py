@@ -59,6 +59,18 @@ class LLMResult:
 
 
 @dataclass
+class SearchResult:
+    """An answer written with Claude's web search tool (Phase 8)."""
+
+    text: str
+    input_tokens: int
+    output_tokens: int
+    searches: int  # web searches the model ran (billed per search)
+    urls: list[dict]  # every result the search tool returned: {"url", "title", "page_age"}
+    cost_usd: float = 0.0
+
+
+@dataclass
 class ToolCall:
     id: str
     name: str
@@ -159,6 +171,42 @@ class AnthropicProvider:
         text = "".join(b.text for b in response.content if b.type == "text")
         return text, response.usage.input_tokens, response.usage.output_tokens
 
+    def search(self, system: str, user: str, max_tokens: int, max_searches: int, tool_type: str) -> SearchResult:
+        """One question answered with the server-side web search tool.
+
+        The tool runs on Anthropic's side; we only read the results. A
+        `pause_turn` stop means the server paused a long turn: send the
+        conversation back to let it continue.
+        """
+        messages: list = [{"role": "user", "content": user}]
+        tools = [{"type": tool_type, "name": "web_search", "max_uses": max_searches}]
+        tin = tout = searches = 0
+        urls: list[dict] = []
+        text = ""
+        for _ in range(5):
+            kwargs = {"max_tokens": max_tokens, "system": system, "messages": messages, "tools": tools}
+            output_config = self._output_config(None)
+            if output_config:
+                kwargs["output_config"] = output_config
+            response = self._create(**kwargs)
+            tin += response.usage.input_tokens
+            tout += response.usage.output_tokens
+            server_use = getattr(response.usage, "server_tool_use", None)
+            searches += int(getattr(server_use, "web_search_requests", 0) or 0) if server_use else 0
+            for block in response.content:
+                if block.type == "web_search_tool_result" and isinstance(block.content, list):  # an error is an object
+                    for item in block.content:
+                        if getattr(item, "type", "") == "web_search_result":
+                            urls.append({"url": item.url, "title": getattr(item, "title", ""),
+                                         "page_age": getattr(item, "page_age", None)})
+            text = "".join(b.text for b in response.content if b.type == "text")
+            if response.stop_reason == "pause_turn":
+                messages.append({"role": "assistant", "content": response.content})
+                continue
+            self._check_stop(response)
+            break
+        return SearchResult(text=text, input_tokens=tin, output_tokens=tout, searches=searches, urls=urls)
+
     def tool_turn(self, system: str, messages: list, tools: list[dict], max_tokens: int) -> tuple[ToolTurn, int, int]:
         kwargs = {"max_tokens": max_tokens, "system": system, "messages": messages, "tools": tools}
         output_config = self._output_config(None)
@@ -220,6 +268,9 @@ class ManualProvider:
     def tool_turn(self, *args, **kwargs):
         raise LLMError("The manual provider cannot use tools. Use the anthropic provider for this command.")
 
+    def search(self, *args, **kwargs):
+        raise LLMError("The manual provider cannot search the web. Use the anthropic provider for this command.")
+
 
 class FakeProvider:
     """Canned answers for tests. `answers` is a list (used in order) or a function."""
@@ -245,6 +296,11 @@ class FakeProvider:
     def tool_turn(self, system: str, messages: list, tools: list[dict], max_tokens: int) -> tuple[ToolTurn, int, int]:
         turn = self._next(system=system, messages=list(messages), tools=tools)
         return turn, estimate_tokens(system + json.dumps(messages, default=str)), 50
+
+    def search(self, system: str, user: str, max_tokens: int, max_searches: int, tool_type: str) -> SearchResult:
+        """The canned answer is a SearchResult (or a dict with its fields)."""
+        answer = self._next(system=system, user=user, max_searches=max_searches, tool_type=tool_type)
+        return answer if isinstance(answer, SearchResult) else SearchResult(**answer)
 
 
 # --------------------------------------------------------------------------
@@ -294,12 +350,12 @@ class LLM:
             raise LLMError("The prompt would be over 50,000 tokens. Shrink the input instead (PLAN.md section 7).")
 
     def _log(self, purpose: str, key: str | None, input_tokens: int, output_tokens: int, cost: float,
-             ok: bool, error: str | None = None) -> None:
+             ok: bool, error: str | None = None, searches: int = 0) -> None:
         row = {
             "created_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
             "provider": self.provider_name, "model": self.model, "purpose": purpose, "match_id": key,
             "input_tokens": int(input_tokens), "output_tokens": int(output_tokens), "cost_usd": float(cost),
-            "ok": ok, "error": error,
+            "searches": int(searches), "ok": ok, "error": error,
         }
         self.calls.append(row)
         if self.engine is not None:
@@ -325,6 +381,30 @@ class LLM:
         self._log(purpose, key, tin, tout, cost, ok=True)
         return LLMResult(text=text, input_tokens=tin, output_tokens=tout, cost_usd=cost,
                          provider=self.provider_name, model=self.model)
+
+    def search(self, system: str, user: str, max_tokens: int = 6000, max_searches: int = 5,
+               tool_type: str = "web_search_20250305", price_per_search: float = 0.01,
+               purpose: str = "scout", key: str | None = None) -> SearchResult:
+        """One answer with the web search tool. Searches count toward the cost cap."""
+        worst_searches = max_searches * price_per_search if self.provider_name == "anthropic" else 0.0
+        worst = self.cost(estimate_tokens(system + user), max_tokens) + worst_searches
+        if self.spent_usd + worst > self.settings.max_cost_usd_per_run:
+            raise BudgetExceeded(
+                f"Stopped: this search could cost up to ${worst:.4f} (with {max_searches} searches), "
+                f"${self.spent_usd:.4f} is already spent, the cap is ${self.settings.max_cost_usd_per_run:.2f}."
+            )
+        try:
+            result = self.provider.search(system, user, max_tokens, max_searches, tool_type)
+        except LLMError as exc:
+            self._log(purpose, key, 0, 0, 0.0, ok=False, error=str(exc))
+            raise
+        cost = self.cost(result.input_tokens, result.output_tokens)
+        if self.provider_name == "anthropic":
+            cost = round(cost + result.searches * price_per_search, 6)
+        result.cost_usd = cost
+        self.spent_usd += cost
+        self._log(purpose, key, result.input_tokens, result.output_tokens, cost, ok=True, searches=result.searches)
+        return result
 
     def tool_turn(self, system: str, messages: list, tools: list[dict], max_tokens: int = 4000,
                   purpose: str = "", key: str | None = None) -> ToolTurn:

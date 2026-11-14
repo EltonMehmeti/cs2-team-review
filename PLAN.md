@@ -6,9 +6,9 @@ finds the team's recurring mistakes, tracks the plays the team runs, and
 suggests new plays with examples.
 
 This document is written for the agent (or person) who implements the rest.
-Phases 1 to 3 are built and tested; Phases 4 to 7 are built and wait for the
+Phases 1 to 3 are built and tested; Phases 4 to 8 are built and wait for the
 owner's key, webhook, real matches, pro demos, zone review and checks.
-Phases 1.5, 8 and 9 are specified below.
+Phases 1.5 and 9 are specified below.
 
 | Phase | What | Status |
 |---|---|---|
@@ -20,7 +20,7 @@ Phases 1.5, 8 and 9 are specified below.
 | 5 | Trends across matches and a question-answering agent | Built and tested with a fake model; needs real matches and a key |
 | 6 | Play detection: which plays the team runs | Built and tested; needs zone review, 10 real matches and the IGL |
 | 7 | Playbook from opponents and pro demos, with lineups | Built and tested; needs 5 pro demos and a lineup test |
-| 8 | Web scout: recent plays from articles and videos | To do |
+| 8 | Web scout: recent plays from articles and videos | Built and tested with a fake model; needs a key for a real run |
 | 9 | Weekly suggestions and feedback loop | To do |
 | 10 | Optional: web UI, automation | Later |
 
@@ -129,6 +129,7 @@ cs2review/
   mapview.py       Phase 6: CLI: PNG of a map coloured by zone, to review a zone file
   plays.py         Phase 6: CLI: play features, labels, manual review, coverage
   playbook.py      Phase 7: CLI: cards from opponents' and pro rounds, statuses, beat-us
+  scout.py         Phase 8: CLI: web scout with Claude's web search tool, checked links
   prompts/         prompt text files
 maps/
   de_mirage.toml   draft zones from this plan (reviewed = false)
@@ -142,6 +143,7 @@ tests/
   eval_ask.py           Phase 5: run the agent on them (real model, not in the suite)
   test_plays.py         Phase 6 unit tests, hand-made positions on Mirage zones
   test_playbook.py      Phase 7 unit tests
+  test_scout.py         Phase 8 unit tests, fake search, no network
   test_integration.py   end-to-end test on a public demo (skips if missing)
 ```
 
@@ -1012,6 +1014,34 @@ Still open: 5 real pro demos of one map, the owner's lineup test, and
 
 **Done when.** A run yields at least 3 sourced candidates for a map, every
 URL opens, cost is logged and under the cap.
+
+**What was built (Phase 8, 2026-11-14).** `python -m cs2review.scout
+[--map X]`, tested with a fake search (8 unit tests); no real search was
+run. Still open: a real run with `ANTHROPIC_API_KEY` to check the 3
+candidates, the links and the cost. The optional YouTube step (Gemini) is
+not built: only if the owner asks. Decisions:
+
+- `llm.py` gained `LLM.search()`: the server-side web search tool with
+  `max_uses` set to the per-map limit, a `pause_turn` loop, the result URLs
+  collected from `web_search_tool_result` blocks, and cost = tokens +
+  searches x `price_per_search`. The cap check counts the worst case
+  (all searches used). `llm_calls.searches` logs them (schema version 8).
+- The default tool is `web_search_20250305`: the newer
+  `web_search_20260209` (dynamic filtering) is documented for Sonnet 4.6 /
+  Opus 4.6 and newer, not for Haiku 5.5. Change `[scout] tool_type` when
+  using a stronger model.
+- No structured outputs here: search answers carry citations, which do not
+  combine with `output_config.format`. The model returns JSON in its text;
+  the code parses and checks it.
+- A finding is kept only if its URL was returned by the search tool (an
+  invented link is dropped), the URL opens (a GET, unless `check_urls =
+  false`), the map matches, the side is T or CT, the site A, B or none, and
+  it has steps. Titles and steps are cut to 300 characters, at most 12
+  steps: the text comes from strangers.
+- Web cards are stored in `playbook` with `source_kind = 'web'`,
+  `needs_review = 1`, no lineups, `seen = won = 0`; a playbook rebuild from
+  demos does not delete them. `stale` compares `published` with
+  `last_map_update`.
 
 ### Phase 9: suggestions and the feedback loop
 

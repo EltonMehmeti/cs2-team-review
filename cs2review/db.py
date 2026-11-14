@@ -25,8 +25,9 @@ from . import places
 # match_digests (Phase 3). Version 4 added llm_calls and reports (Phase 4).
 # Version 5 added the views our_rounds, our_player_rounds, our_kills and
 # reports.kind (Phase 5). Version 6 added round_plays (Phase 6). Version 7
-# added matches.source_kind and the playbook table (Phase 7).
-SCHEMA_VERSION = 7
+# added matches.source_kind and the playbook table (Phase 7). Version 8 added
+# llm_calls.searches (Phase 8).
+SCHEMA_VERSION = 8
 
 
 class SchemaMismatchError(RuntimeError):
@@ -434,7 +435,8 @@ class LLMCall(Base):
     match_id: Mapped[str | None] = mapped_column(String)  # or another key, such as a question id
     input_tokens: Mapped[int] = mapped_column(Integer)
     output_tokens: Mapped[int] = mapped_column(Integer)
-    cost_usd: Mapped[float] = mapped_column(Float)
+    cost_usd: Mapped[float] = mapped_column(Float)  # tokens plus web searches
+    searches: Mapped[int] = mapped_column(Integer, default=0, server_default="0")  # web searches (Phase 8)
     ok: Mapped[bool] = mapped_column(Boolean)
     error: Mapped[str | None] = mapped_column(Text)
 

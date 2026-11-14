@@ -291,6 +291,16 @@ def teams_that_beat_us(engine: Engine) -> pd.DataFrame:
 
 def format_card(row: dict) -> str:
     card = json.loads(row["card"])
+    if row["source_kind"] == "web":  # found by the web scout: plain-text steps and a link
+        src = card.get("source", {})
+        lines = [f"{row['id']}  {row['map']}  {row['side']} {row['site'] or '-'}  {card['title']}",
+                 f"  from the web, status {row['status']}" + ("  NEEDS REVIEW" if row["needs_review"] else "")
+                 + ("  STALE" if row["stale"] else ""),
+                 f"  source: {src.get('url')}" + (f" (published {src['published']})" if src.get("published") else "")
+                 + (f" at {src['video_timestamp']}" if src.get("video_timestamp") else ""), "  steps:"]
+        lines += [f"    {i}. {s['do']}" for i, s in enumerate(card["steps"], 1)]
+        lines.append("  no lineup commands (web cards have none until a matching pro round is found)")
+        return "\n".join(lines)
     ev = card["evidence"]
     level = "easy" if row["difficulty"] <= 3 else "hard" if row["difficulty"] >= 7 else "medium"
     lines = [f"{row['id']}  {row['map']}  {card['title']}",

@@ -24,8 +24,8 @@ from . import places
 # and five new columns on kills. Version 3 added round_summaries and
 # match_digests (Phase 3). Version 4 added llm_calls and reports (Phase 4).
 # Version 5 added the views our_rounds, our_player_rounds, our_kills and
-# reports.kind (Phase 5).
-SCHEMA_VERSION = 5
+# reports.kind (Phase 5). Version 6 added round_plays (Phase 6).
+SCHEMA_VERSION = 6
 
 
 class SchemaMismatchError(RuntimeError):
@@ -379,6 +379,22 @@ class MatchDigest(Base):
     token_estimate: Mapped[int] = mapped_column(Integer)  # characters / 4
 
 
+class RoundPlay(Base):
+    """What one team did in one round: a play label and its features (plays.py)."""
+
+    __tablename__ = "round_plays"
+    match_id: Mapped[str] = mapped_column(String, primary_key=True)
+    round: Mapped[int] = mapped_column(Integer, primary_key=True)
+    team: Mapped[str] = mapped_column(String, primary_key=True)
+    side: Mapped[str | None] = mapped_column(String)
+    label: Mapped[str] = mapped_column(String)  # T: rush/execute/split/fake/default/slow/unknown; CT: stack/aggression/standard
+    site: Mapped[str | None] = mapped_column(String)
+    confidence: Mapped[float] = mapped_column(Float)  # 1.0 for a manual label
+    features: Mapped[str] = mapped_column(Text)  # JSON: zones at 10/20/30/45 s, waves, site hit, entry, plant
+    name: Mapped[str | None] = mapped_column(String)  # the team's own name for the play, set by hand
+    label_source: Mapped[str] = mapped_column(String)  # "rule" or "manual" (manual always wins)
+
+
 class LLMCall(Base):
     """Every call to a language model: who, what for, tokens and cost (llm.py)."""
 
@@ -429,7 +445,7 @@ class MapPlace(Base):
 MATCH_MODELS = [Match, Player, Round, PlayerRound, Kill, Damage, Grenade, Blind, BombEvent, Position]
 # tables computed from the ones above by metrics.py and summaries.py
 # (deleted with the match too, and rebuilt after every ingest)
-METRIC_MODELS = [TeamRound, PlayerRoundStat, RoundSummary, MatchDigest]
+METRIC_MODELS = [TeamRound, PlayerRoundStat, RoundPlay, RoundSummary, MatchDigest]
 
 
 # SQL views for trends and the question agent (Phase 5): only the owner's team.

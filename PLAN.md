@@ -6,9 +6,9 @@ finds the team's recurring mistakes, tracks the plays the team runs, and
 suggests new plays with examples.
 
 This document is written for the agent (or person) who implements the rest.
-Phases 1 to 3 are built and tested; Phases 4 and 5 are built and wait for the
-owner's key, webhook, real matches and checks. Phases 1.5 and 6 to 9 are
-specified below.
+Phases 1 to 3 are built and tested; Phases 4 to 6 are built and wait for the
+owner's key, webhook, real matches, zone review and checks. Phases 1.5 and 7
+to 9 are specified below.
 
 | Phase | What | Status |
 |---|---|---|
@@ -18,7 +18,7 @@ specified below.
 | 3 | Round summaries and match digest (the AI's input) | Done, tested on the public demo |
 | 4 | Match report written by an LLM, posted to Discord | Built and tested with a fake model; needs the owner (see Phase 4) |
 | 5 | Trends across matches and a question-answering agent | Built and tested with a fake model; needs real matches and a key |
-| 6 | Play detection: which plays the team runs | To do |
+| 6 | Play detection: which plays the team runs | Built and tested; needs zone review, 10 real matches and the IGL |
 | 7 | Playbook from opponents and pro demos, with lineups | To do |
 | 8 | Web scout: recent plays from articles and videos | To do |
 | 9 | Weekly suggestions and feedback loop | To do |
@@ -125,7 +125,12 @@ cs2review/
   trends.py        Phase 5: CLI: trends across matches (MIN_N honesty rule)
   trend_report.py  Phase 5: weekly trend report by the LLM, evidence checked by code
   ask.py           Phase 5: CLI: question agent with a read-only run_sql tool
+  zones.py         Phase 6: maps/<map>.toml zone files (CLI: check or draft)
+  mapview.py       Phase 6: CLI: PNG of a map coloured by zone, to review a zone file
+  plays.py         Phase 6: CLI: play features, labels, manual review, coverage
   prompts/         prompt text files
+maps/
+  de_mirage.toml   draft zones from this plan (reviewed = false)
 tests/
   test_rounds.py        unit tests, no demo needed
   test_metrics.py       Phase 2 unit tests, no demo needed
@@ -134,6 +139,7 @@ tests/
   test_trends_ask.py    Phase 5 unit tests on a synthetic database (fixtures.py)
   eval_questions.yaml   Phase 5: 10 questions with SQL answers
   eval_ask.py           Phase 5: run the agent on them (real model, not in the suite)
+  test_plays.py         Phase 6 unit tests, hand-made positions on Mirage zones
   test_integration.py   end-to-end test on a public demo (skips if missing)
 ```
 
@@ -337,6 +343,7 @@ every table change.
 | `llm_calls` | every model call: provider, model, purpose, tokens, cost (Phase 4) |
 | `reports` | match or trend report (`kind`): model JSON, rendered Markdown, tokens, cost (Phase 4, 5) |
 | `our_rounds`, `our_player_rounds`, `our_kills` | views: only our team (Phase 5) |
+| `round_plays` | team per played round: play label, site, confidence, features JSON, name, rule/manual (Phase 6) |
 | `meta` | `schema_version` |
 
 ---
@@ -855,6 +862,40 @@ to trends.
 than `unknown`, and on a sample of 30 rounds the in-game leader agrees with
 80% of the labels. Record the measured numbers here. If the target is
 missed, tune the rules with the owner before moving on.
+
+**What was built and measured (Phase 6, 2026-11-14).** Steps 1 to 5 are in
+place: `maps/de_mirage.toml` (the draft above, `reviewed = false`; it covers
+all 23 areas seen in the test demo), `zones` and `mapview` CLIs, features
+and labels in `round_plays` (ingest runs them), `plays review`, `play` in
+round summaries and `by_play` in trends. 14 unit tests. Measured on the one
+public demo (not the target set): 6 of 9 T rounds labelled (67%): slow 3,
+split 2, default 1, unknown 3. The unknowns are rounds won by eliminations
+before any site hit, and one plant on B that the site-hit rule missed. Not
+measured yet: the 10 real matches and the IGL's agreement. Decisions:
+
+- A "site hit" uses the `[sites]` areas (BombsiteA), not the broad zone
+  A, which also holds TRamp and Palace: being in Palace is not a hit.
+  "Execute" and "fake" compare the wave's landing zone with the site's
+  zone (`site_zone`).
+- `default` needs no site hit for 40 s *and* the round to last that long;
+  `slow` needs 60 s the same way. A round that ends at 35 s with no hit
+  is `unknown`, not `slow`.
+- Entry zones ignore areas in no zone. With the draft zones a Palace + Ramp
+  split counts one zone (both are A); the feature JSON keeps the exact
+  areas (`entry_areas`) for tuning.
+- CT labels are `stack` (4+ CTs in a site's zone at 20 s), `aggression`
+  (a CT in zone T before 25 s) and otherwise `standard`. CT features keep
+  `setup_20s` and `rotation_s`.
+- Confidence is a fixed guess per label (rush/execute 0.8, split 0.7,
+  others 0.5, unknown 0). `plays review` shows our rule labels below 0.6.
+- Manual labels live in `data/manual_plays.json`, outside the database, and
+  are merged in every time the plays are rebuilt, so deleting the database
+  keeps them. The file is git-ignored with the rest of `data/`; the owner
+  should back it up (or decide to commit it).
+- A map without a zone file gets a draft with every observed area under
+  `unassigned` and bomb sites guessed from the area names; it is never
+  overwritten. Until the zones are sorted, labels on that map are weak.
+- All thresholds are in `[plays]` of `config.toml`.
 
 ### Phase 7: the playbook (opponents and pro demos)
 

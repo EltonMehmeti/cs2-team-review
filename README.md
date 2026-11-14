@@ -102,6 +102,9 @@ knife round or a restart that was counted as a real round.
 | `python -m cs2review.trends --map de_mirage --last 10` | our trends across matches (rates need 8+ rounds) |
 | `python -m cs2review.trends --report --post` | a short weekly trend summary by the AI, posted to Discord |
 | `python -m cs2review.ask "who trades worst?"` | ask a question in plain words (needs `ANTHROPIC_API_KEY`) |
+| `python -m cs2review.mapview de_mirage` | picture of the map coloured by zone, to check `maps/de_mirage.toml` |
+| `python -m cs2review.plays list --map de_mirage` | which plays we ran (rush, execute, split, ...) and how they went |
+| `python -m cs2review.plays review --map de_mirage` | the in-game leader corrects unclear labels and names the plays |
 | `python -m cs2review.debug_rounds X` | show the raw round events of a demo |
 
 ## Words used in the database
@@ -174,6 +177,11 @@ Tip for pandas: read the flags column as `df["flags"]`, not `df.flags`
 - After updating the code, the tools may say "The database was made by an
   older version". Then delete `data/cs2review.sqlite` and run the ingest
   again. The database is rebuilt from the demos in seconds.
+- Play labels are only as good as the zone file of the map. The Mirage file
+  is a draft: check it with `python -m cs2review.mapview de_mirage`. For
+  other maps a draft is written with every area unassigned; sort them.
+- Labels set in `plays review` are kept in `data/manual_plays.json`, not in
+  the database. Back that file up; deleting the database keeps it.
 - The buy-type limits (eco below $5,000 of team gear, full from $20,000) are
   first guesses. Check them with `--buy-histogram` and change them in
   `config.toml` under `[buy_types]`.

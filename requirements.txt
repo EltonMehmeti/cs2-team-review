@@ -5,3 +5,4 @@ SQLAlchemy>=2.0
 zstandard>=0.23
 pydantic>=2.0
 anthropic>=2.0  # only needed for [llm] provider = "anthropic"
+matplotlib>=3.8  # only for python -m cs2review.mapview

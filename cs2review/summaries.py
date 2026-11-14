@@ -119,6 +119,7 @@ class RoundSummaryModel(_Strict):
     bomb: Bomb | None = None
     result: Result
     flags: list[str] | None = None
+    play: str | None = None  # Phase 6: our play label ("execute A"), or the name the IGL gave it
 
 
 class Rate(_Strict):
@@ -197,6 +198,7 @@ class MatchContext:
     grenades: pd.DataFrame
     positions: pd.DataFrame
     bomb_events: pd.DataFrame
+    round_plays: pd.DataFrame = field(default_factory=pd.DataFrame)
     us: str = "A"
     them: str = "B"
     names: dict[str, str] = field(default_factory=dict)  # steamid -> label ("P3" or "enemy")
@@ -232,7 +234,7 @@ class MatchContext:
             team_rounds=_bools(get("team_rounds"), ["won", "planted", "is_us"]),
             player_round_stats=_bools(get("player_round_stats"), ["kast", "survived", "was_traded", "died"]),
             kills=kills, grenades=get("grenades"), positions=get("positions"), bomb_events=get("bomb_events"),
-            us=us, them=them, names=names, team_of=team_of,
+            round_plays=get("round_plays"), us=us, them=them, names=names, team_of=team_of,
         )
 
     def label(self, steamid) -> str:
@@ -377,6 +379,14 @@ def round_summary(ctx: MatchContext, rnd: int) -> dict:
     flags = json.loads(us_row["flags"]) if isinstance(us_row["flags"], str) else []
     if flags:
         out["flags"] = flags
+
+    # ---- the play we ran (Phase 6), unless the rules could not tell -----------
+    if not ctx.round_plays.empty:
+        mine = ctx.round_plays[(ctx.round_plays["round"] == rnd) & (ctx.round_plays["team"] == ctx.us)]
+        if not mine.empty and mine.iloc[0]["label"] != "unknown":
+            p = mine.iloc[0]
+            name = p["name"] if isinstance(p["name"], str) and p["name"] else None
+            out["play"] = name or (f"{p['label']} {p['site']}" if isinstance(p["site"], str) and p["site"] else p["label"])
     return out
 
 
@@ -532,7 +542,8 @@ def fit_budget(digest: dict, budget: int = TOKEN_BUDGET) -> tuple[dict, int]:
 # database
 # --------------------------------------------------------------------------
 
-DIGEST_TABLES = ["matches", "players", "rounds", "team_rounds", "player_round_stats", "kills", "grenades", "bomb_events"]
+DIGEST_TABLES = ["matches", "players", "rounds", "team_rounds", "player_round_stats", "kills", "grenades", "bomb_events",
+                 "round_plays"]
 
 
 def load_context(engine: Engine, match_id: str) -> MatchContext:

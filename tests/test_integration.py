@@ -198,6 +198,23 @@ def test_full_pipeline_on_public_demo():
         from eval_ask import expected_value, load_questions
         for q in load_questions():
             assert expected_value(db_file, q["sql"]) is not None, q["id"]
+
+        # ---- Phase 6: play labels with the draft Mirage zones --------------------
+        from cs2review.config import Config
+        from cs2review.plays import build_plays, coverage
+        cfg = Config(maps_dir=Path(__file__).resolve().parents[1] / "maps", manual_labels_path=Path(tmp) / "labels.json")
+        plays, zones, created = build_plays(engine, "public_test", cfg)
+        assert not created and zones.map == "de_mirage"
+        t_plays = plays[plays["side"] == "T"].sort_values("round")
+        assert list(t_plays["label"]) == ["slow", "slow", "default", "unknown", "unknown", "split", "slow", "split", "unknown"]
+        assert list(t_plays["site"].fillna("-")) == ["B", "A", "-", "B", "-", "A", "A", "B", "-"]
+        ct_plays = plays[plays["side"] == "CT"].sort_values("round")
+        assert set(ct_plays["label"]) == {"standard"}
+        assert json.loads(ct_plays.iloc[0]["features"])["setup_20s"] == "A1-B2-CT2"
+        assert coverage(engine, "de_mirage") == {"t_rounds": 9, "labelled": 6, "pct": 67, "manual": 0}
+        digest, _ = build_digest(engine, "public_test")
+        assert [r.get("play") for r in digest["rounds"]] == [
+            "slow B", "slow A", "default", None, None, "split A", "slow A", "split B", None]
         engine.dispose()
 
 

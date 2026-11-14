@@ -34,3 +34,13 @@ max_cost_usd_per_run = 0.25       # hard stop for one command
 price_in_per_mtok = 0.10          # USD per million tokens, used only for cost logging
 price_out_per_mtok = 0.50         # (Claude pricing page, 2026-11-14)
 # effort = "low"                  # optional: low / medium / high
+
+# Play detection (Phase 6). Zone files live in maps/<map>.toml.
+# maps_dir = "maps"
+# manual_labels_path = "data/manual_plays.json"   # the IGL's labels: back this up
+[plays]
+rush_before_s = 25.0          # rush: site hit before this
+execute_hit_within_s = 15.0   # execute: site hit this soon after a smoke/molotov wave
+default_no_hit_before_s = 40.0
+slow_no_hit_before_s = 60.0
+review_below = 0.6            # `plays review` shows labels less sure than this

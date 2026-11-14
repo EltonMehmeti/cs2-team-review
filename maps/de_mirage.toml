@@ -1,0 +1,27 @@
+# Zones for de_mirage: groups of the game's own area names ("place" in the
+# database). Play detection (Phase 6) works with zones, because single areas
+# are too fine.
+#
+# DRAFT copied from PLAN.md. The owner must review it: some areas may be in
+# the wrong zone. Look at the picture from
+#     python -m cs2review.mapview de_mirage
+# then fix the lists and set reviewed = true.
+
+reviewed = false
+# Date of the last Valve change to this map, YYYY-MM-DD (Phase 8 uses it to
+# mark old plays as stale). Leave empty until you know it.
+last_map_update = ""
+# Areas seen in demos that are in no zone yet. Move each into a zone below.
+unassigned = []
+
+[zones]
+A   = ["BombsiteA", "TRamp", "PalaceInterior", "PalaceAlley", "Stairs", "Jungle", "Scaffolding"]
+B   = ["BombsiteB", "Apartments", "BackAlley", "House", "Shop", "Truck"]
+Mid = ["TopofMid", "Middle", "Catwalk", "Connector", "Underpass", "Ladder", "SnipersNest", "SideAlley"]
+T   = ["TSpawn"]
+CT  = ["CTSpawn"]
+
+# The bomb sites themselves. A "site hit" is 3 or more attackers inside one.
+[sites]
+A = ["BombsiteA"]
+B = ["BombsiteB"]

@@ -36,6 +36,26 @@ class LLMSettings:
 
 
 @dataclass
+class PlayRules:
+    """[plays] in config.toml: thresholds of the play labels (PLAN.md, Phase 6)."""
+
+    rush_before_s: float = 25.0  # rush: site hit before this
+    execute_min_utility: int = 2  # execute: a wave with this many smokes + molotovs on a site zone ...
+    execute_hit_within_s: float = 15.0  # ... then a site hit there within this many seconds
+    wave_window_s: float = 8.0  # grenades landing in one zone within this many seconds form a wave
+    wave_min_grenades: int = 2
+    site_hit_min_players: int = 3  # a site hit: this many attackers inside a site
+    entry_window_s: float = 10.0  # look this far back for where attackers came from
+    default_at_s: float = 30.0  # default: at this time players in ...
+    default_min_zones: int = 3  # ... this many zones, and
+    default_no_hit_before_s: float = 40.0  # no site hit before this
+    slow_no_hit_before_s: float = 60.0  # slow: no site hit before this
+    stack_min: int = 4  # CT stack: this many CTs in one site zone at 20 s
+    aggression_before_s: float = 25.0  # CT aggression: a CT in the T zone before this
+    review_below: float = 0.6  # `plays review` shows labels with less confidence
+
+
+@dataclass
 class Config:
     # steamID64 of each of your five players, as strings
     team_steam_ids: list[str] = field(default_factory=list)
@@ -49,6 +69,13 @@ class Config:
     buy_types: BuyThresholds = field(default_factory=BuyThresholds)
     # the language model ([llm] in config.toml)
     llm: LLMSettings = field(default_factory=LLMSettings)
+    # one zone file per map (Phase 6): maps/de_mirage.toml
+    maps_dir: Path = Path("maps")
+    # labels you set by hand in `plays review`; kept outside the database so
+    # that rebuilding the database never loses them. Back this file up.
+    manual_labels_path: Path = Path("data/manual_plays.json")
+    # play detection thresholds ([plays] in config.toml)
+    plays: PlayRules = field(default_factory=lambda: PlayRules())
 
 
 def load_config(path: str | Path = "config.toml") -> Config:
@@ -76,4 +103,10 @@ def load_config(path: str | Path = "config.toml") -> Config:
             setattr(cfg.llm, key, float(llm[key]))
     if "out_dir" in llm:
         cfg.llm.out_dir = Path(llm["out_dir"])
+    for key in ("maps_dir", "manual_labels_path"):
+        if key in raw:
+            setattr(cfg, key, Path(raw[key]))
+    for key, value in raw.get("plays", {}).items():
+        if hasattr(cfg.plays, key):
+            setattr(cfg.plays, key, type(getattr(cfg.plays, key))(value))
     return cfg

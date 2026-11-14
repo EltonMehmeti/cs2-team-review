@@ -22,6 +22,7 @@ from .check import check_match
 from .config import load_config
 from .db import SchemaMismatchError, get_engine, has_match, load_place_cells, save_match
 from .metrics import build_match_metrics
+from .plays import build_plays
 from .parse import parse_demo
 from .summaries import build_digest
 from .unpack import is_demo_file, match_id_for, unpack_demo
@@ -57,6 +58,7 @@ def ingest_file(src: Path, engine, cfg, force: bool = False) -> str:
     )
     save_match(engine, tables)
     build_match_metrics(engine, match_id, cfg.buy_types)  # Phase 2: team_rounds, player_round_stats
+    _, zones, zones_created = build_plays(engine, match_id, cfg)  # Phase 6: round_plays
     _, tokens = build_digest(engine, match_id)  # Phase 3: round_summaries, match_digests
 
     m = tables["matches"].iloc[0]
@@ -66,6 +68,8 @@ def ingest_file(src: Path, engine, cfg, force: bool = False) -> str:
         f"{len(tables['kills'])} kills, {len(tables['grenades'])} grenades, "
         f"digest ~{tokens} tokens, {time.time() - started:.1f}s"
     )
+    if zones_created:
+        print(f"       note: wrote a draft zone file {zones.path}; sort its areas so plays can be labelled")
     if cfg.team_steam_ids and m["us_team"] is None:
         print("       note: none of your team_steam_ids played in this match")
     if ok:

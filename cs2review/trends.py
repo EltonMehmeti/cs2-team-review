@@ -84,6 +84,10 @@ def compute_trends(engine: Engine, map_name: str | None = None, last: int | None
                     ["kast", "opening_kill", "opening_death", "was_traded", "survived"])
     kills = _bool(_read(engine, f"SELECT * FROM our_kills WHERE match_id IN ({marks})", **params),
                   ["is_opening", "was_traded", "after_round_end", "is_suicide", "is_teamkill", "by_us", "of_us"])
+    plays = _read(engine, f"""
+        SELECT rp.match_id, rp.round, rp.label, rp.site, rp.name FROM round_plays rp
+        JOIN matches m ON m.match_id = rp.match_id AND rp.team = m.us_team
+        WHERE rp.match_id IN ({marks})""", **params)
 
     for map_, mr in rounds.groupby("map", sort=True):
         block: dict = {"matches": int(mr["match_id"].nunique()), "sides": {}}
@@ -120,6 +124,12 @@ def compute_trends(engine: Engine, map_name: str | None = None, last: int | None
             s[label] = {site: rate(g["won"].sum(), len(g)) for site, g in planted.groupby(planted["plant_site"].fillna("?"), sort=True)}
             flags = Counter(f for fl in sr["flags"] for f in json.loads(fl))
             s["flags"] = dict(sorted(flags.items()))
+            # Phase 6: win rate per play (the IGL's name for it when one was set)
+            sp = plays.merge(sr[["match_id", "round", "won"]], on=["match_id", "round"]) if not plays.empty else plays
+            s["by_play"] = {}
+            if not sp.empty:
+                sp = sp.assign(play=[_play_name(l, st, n) for l, st, n in zip(sp["label"], sp["site"], sp["name"])])
+                s["by_play"] = {p: rate(g["won"].sum(), len(g)) for p, g in sp.groupby("play", sort=True)}
             block["sides"][side] = s
 
         # per player on this map
@@ -141,6 +151,12 @@ def compute_trends(engine: Engine, map_name: str | None = None, last: int | None
         block["players"] = sorted(table, key=lambda p: (-p["rounds"], p["name"]))
         out["maps"][map_] = block
     return out
+
+
+def _play_name(label, site, name) -> str:
+    if isinstance(name, str) and name:
+        return name
+    return f"{label} {site}" if isinstance(site, str) and site else str(label)
 
 
 def format_trends(trends: dict) -> str:
@@ -173,6 +189,10 @@ def format_trends(trends: dict) -> str:
                     lines.append(f"  {label + ' ' + site:<22}{rate_text(r)}")
             else:
                 lines.append(f"  {label:<22}no plants")
+            if s.get("by_play"):
+                lines.append("  by play:")
+                for play, r in sorted(s["by_play"].items(), key=lambda kv: -kv[1]["n"]):
+                    lines.append(f"    {play[:20]:<20}{rate_text(r)}")
             if s["flags"]:
                 lines.append("  flags: " + ", ".join(f"{k} {v}" for k, v in s["flags"].items()))
         lines.append("")

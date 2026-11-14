@@ -6,9 +6,9 @@ finds the team's recurring mistakes, tracks the plays the team runs, and
 suggests new plays with examples.
 
 This document is written for the agent (or person) who implements the rest.
-Phases 1 to 3 are built and tested; Phases 4 to 6 are built and wait for the
-owner's key, webhook, real matches, zone review and checks. Phases 1.5 and 7
-to 9 are specified below.
+Phases 1 to 3 are built and tested; Phases 4 to 7 are built and wait for the
+owner's key, webhook, real matches, pro demos, zone review and checks.
+Phases 1.5, 8 and 9 are specified below.
 
 | Phase | What | Status |
 |---|---|---|
@@ -19,7 +19,7 @@ to 9 are specified below.
 | 4 | Match report written by an LLM, posted to Discord | Built and tested with a fake model; needs the owner (see Phase 4) |
 | 5 | Trends across matches and a question-answering agent | Built and tested with a fake model; needs real matches and a key |
 | 6 | Play detection: which plays the team runs | Built and tested; needs zone review, 10 real matches and the IGL |
-| 7 | Playbook from opponents and pro demos, with lineups | To do |
+| 7 | Playbook from opponents and pro demos, with lineups | Built and tested; needs 5 pro demos and a lineup test |
 | 8 | Web scout: recent plays from articles and videos | To do |
 | 9 | Weekly suggestions and feedback loop | To do |
 | 10 | Optional: web UI, automation | Later |
@@ -128,6 +128,7 @@ cs2review/
   zones.py         Phase 6: maps/<map>.toml zone files (CLI: check or draft)
   mapview.py       Phase 6: CLI: PNG of a map coloured by zone, to review a zone file
   plays.py         Phase 6: CLI: play features, labels, manual review, coverage
+  playbook.py      Phase 7: CLI: cards from opponents' and pro rounds, statuses, beat-us
   prompts/         prompt text files
 maps/
   de_mirage.toml   draft zones from this plan (reviewed = false)
@@ -140,6 +141,7 @@ tests/
   eval_questions.yaml   Phase 5: 10 questions with SQL answers
   eval_ask.py           Phase 5: run the agent on them (real model, not in the suite)
   test_plays.py         Phase 6 unit tests, hand-made positions on Mirage zones
+  test_playbook.py      Phase 7 unit tests
   test_integration.py   end-to-end test on a public demo (skips if missing)
 ```
 
@@ -344,6 +346,7 @@ every table change.
 | `reports` | match or trend report (`kind`): model JSON, rendered Markdown, tokens, cost (Phase 4, 5) |
 | `our_rounds`, `our_player_rounds`, `our_kills` | views: only our team (Phase 5) |
 | `round_plays` | team per played round: play label, site, confidence, features JSON, name, rule/manual (Phase 6) |
+| `playbook` | play card: signature, seen/won, difficulty, status, stale, card JSON (Phase 7) |
 | `meta` | `schema_version` |
 
 ---
@@ -950,6 +953,35 @@ measured yet: the 10 real matches and the IGL's agreement. Decisions:
 complete steps and commands; a "teams that beat us" list exists for the
 owner's maps; the owner reproduces one smoke from a card and reports how
 close it lands.
+
+**What was built (Phase 7, 2026-11-14).** `matches.source_kind`,
+`ingest --kind pro` (default folder `pro_inbox/`, no "us" for pro demos),
+`python -m cs2review.playbook build|list|show|status|beat-us`, and
+`plays status` as the plan names it. The test demo, treated as a pro demo,
+gives 2 cards (A split and B split). 5 unit tests plus that golden check.
+Still open: 5 real pro demos of one map, the owner's lineup test, and
+"teams that beat us" on real matches (it needs lost matches). Decisions:
+
+- The signature uses the play's own utility wave: for an execute the wave
+  on the hit site's zone, for a fake the wave on the other site, for a
+  split the last smoke/molotov wave before the hit (`plays.play_wave`).
+  Landing areas are de-duplicated and sorted. A split without such a wave
+  gets an empty area list, so all of them on one site form one card.
+- Groups come from every candidate round (won or lost); a group becomes a
+  card when it was won at least once, and seen/won count all its rounds.
+  Our own rounds never become cards.
+- Steps come from the most recent won round: roles P1..P5 in order of first
+  action, the wave's smokes/molotovs with `from`, `to`, lineup and throw
+  type, the attackers in the site at the hit with the area they came
+  `via`, and the plant. Up to 3 examples with `playdemo ...;
+  demo_gototick ...` (5 seconds before the wave, as in Phase 4).
+- Difficulty: a standing smoke/molotov counts 1, a jump or running throw
+  counts 2 instead, plus 1 if any two land within 2 seconds. (The plan's
+  sentence allowed "2 extra"; "2 instead" keeps easy plays easy.)
+- Statuses live in `data/playbook_status.json` keyed by card id (a hash of
+  the signature), so a rebuild keeps them. A card is `stale` when its last
+  sighting is before `last_map_update` in the map's zone file.
+- Card pictures (optional) are not built.
 
 ### Phase 8: the web scout
 

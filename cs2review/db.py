@@ -24,8 +24,9 @@ from . import places
 # and five new columns on kills. Version 3 added round_summaries and
 # match_digests (Phase 3). Version 4 added llm_calls and reports (Phase 4).
 # Version 5 added the views our_rounds, our_player_rounds, our_kills and
-# reports.kind (Phase 5). Version 6 added round_plays (Phase 6).
-SCHEMA_VERSION = 6
+# reports.kind (Phase 5). Version 6 added round_plays (Phase 6). Version 7
+# added matches.source_kind and the playbook table (Phase 7).
+SCHEMA_VERSION = 7
 
 
 class SchemaMismatchError(RuntimeError):
@@ -53,6 +54,7 @@ class Match(Base):
     map: Mapped[str] = mapped_column(String, index=True)
     server_name: Mapped[str | None] = mapped_column(String)
     source: Mapped[str | None] = mapped_column(String)  # faceit / valve / other
+    source_kind: Mapped[str] = mapped_column(String, default="own", server_default="own")  # "own" (our match) or "pro" (downloaded by hand)
     tick_rate: Mapped[int] = mapped_column(Integer)
     rounds_total: Mapped[int] = mapped_column(Integer)
     rounds_played: Mapped[int] = mapped_column(Integer)
@@ -395,6 +397,31 @@ class RoundPlay(Base):
     label_source: Mapped[str] = mapped_column(String)  # "rule" or "manual" (manual always wins)
 
 
+class Playbook(Base):
+    """A play seen in opponents' or pro demos: a card with steps, lineups and examples (playbook.py).
+
+    Rebuilt from round_plays; the status you set is kept in data/playbook_status.json.
+    """
+
+    __tablename__ = "playbook"
+    id: Mapped[str] = mapped_column(String, primary_key=True)  # "pb_" + a short hash of the signature
+    signature: Mapped[str] = mapped_column(String)  # map|side|site|sorted smoke and molotov landing areas
+    map: Mapped[str] = mapped_column(String, index=True)
+    side: Mapped[str] = mapped_column(String)
+    site: Mapped[str | None] = mapped_column(String)
+    title: Mapped[str] = mapped_column(String)
+    source_kind: Mapped[str] = mapped_column(String)  # opponent / pro / web / own
+    seen: Mapped[int] = mapped_column(Integer)
+    won: Mapped[int] = mapped_column(Integer)
+    first_seen: Mapped[str | None] = mapped_column(String)
+    last_seen: Mapped[str | None] = mapped_column(String)
+    difficulty: Mapped[int] = mapped_column(Integer)  # 3 or less is easy, 7 or more is hard
+    status: Mapped[str] = mapped_column(String)  # new / suggested / trying / adopted / dropped
+    stale: Mapped[bool] = mapped_column(Boolean)  # last seen before the map's last update
+    needs_review: Mapped[bool] = mapped_column(Boolean)
+    card: Mapped[str] = mapped_column(Text)  # JSON: title, steps, examples, evidence, lineup_verified
+
+
 class LLMCall(Base):
     """Every call to a language model: who, what for, tokens and cost (llm.py)."""
 
@@ -417,7 +444,7 @@ class Report(Base):
 
     __tablename__ = "reports"
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    kind: Mapped[str] = mapped_column(String, default="match")  # "match" or "trends" (Phase 5)
+    kind: Mapped[str] = mapped_column(String, default="match", server_default="match")  # "match" or "trends" (Phase 5)
     match_id: Mapped[str] = mapped_column(String, index=True)  # for trends: "trends:<map>:<last>"
     created_at: Mapped[str] = mapped_column(String)
     provider: Mapped[str] = mapped_column(String)

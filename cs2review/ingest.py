@@ -3,6 +3,7 @@
     python -m cs2review.ingest                 # everything in the inbox folder
     python -m cs2review.ingest path/to/x.dem   # specific files or folders
     python -m cs2review.ingest --force         # re-read matches already stored
+    python -m cs2review.ingest --kind pro      # pro demos from pro_inbox/ (downloaded by hand)
 
 Run this after you have finished playing, not during a match: it is harmless
 to the game, but there is no reason to make your PC do extra work mid-round.
@@ -40,7 +41,7 @@ def find_demos(paths: list[Path]) -> list[Path]:
     return found
 
 
-def ingest_file(src: Path, engine, cfg, force: bool = False) -> str:
+def ingest_file(src: Path, engine, cfg, force: bool = False, kind: str = "own") -> str:
     """Ingest one file. Returns 'new', 'skipped' or raises."""
     match_id = match_id_for(src)
     if has_match(engine, match_id) and not force:
@@ -52,10 +53,11 @@ def ingest_file(src: Path, engine, cfg, force: bool = False) -> str:
     map_name = DemoParser(str(dem)).parse_header().get("map_name", "unknown")
     tables = parse_demo(
         dem,
-        team_steam_ids=cfg.team_steam_ids,
+        team_steam_ids=cfg.team_steam_ids if kind == "own" else [],  # a pro match has no "us"
         known_cells=load_place_cells(engine, map_name),
         match_id=match_id,
     )
+    tables["matches"]["source_kind"] = kind
     save_match(engine, tables)
     build_match_metrics(engine, match_id, cfg.buy_types)  # Phase 2: team_rounds, player_round_stats
     _, zones, zones_created = build_plays(engine, match_id, cfg)  # Phase 6: round_plays
@@ -70,7 +72,7 @@ def ingest_file(src: Path, engine, cfg, force: bool = False) -> str:
     )
     if zones_created:
         print(f"       note: wrote a draft zone file {zones.path}; sort its areas so plays can be labelled")
-    if cfg.team_steam_ids and m["us_team"] is None:
+    if kind == "own" and cfg.team_steam_ids and m["us_team"] is None:
         print("       note: none of your team_steam_ids played in this match")
     if ok:
         print("       check OK: matches the demo's own scoreboard")
@@ -85,6 +87,8 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="Parse CS2 demos into the SQLite database.")
     ap.add_argument("paths", nargs="*", type=Path, help="demo files or folders (default: the inbox folder)")
     ap.add_argument("--force", action="store_true", help="re-read matches that are already stored")
+    ap.add_argument("--kind", choices=["own", "pro"], default="own",
+                    help="own = our matches (default, from the inbox); pro = pro demos (default folder pro_inbox/)")
     ap.add_argument("--config", default="config.toml")
     args = ap.parse_args(argv)
 
@@ -99,15 +103,17 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     cfg.inbox_dir.mkdir(parents=True, exist_ok=True)
 
-    demos = find_demos(args.paths or [cfg.inbox_dir])
+    default_dir = cfg.inbox_dir if args.kind == "own" else cfg.pro_inbox_dir
+    default_dir.mkdir(parents=True, exist_ok=True)
+    demos = find_demos(args.paths or [default_dir])
     if not demos:
-        print(f"No demo files found. Put .dem or .dem.zst files into: {cfg.inbox_dir.resolve()}")
+        print(f"No demo files found. Put .dem or .dem.zst files into: {default_dir.resolve()}")
         return 1
 
     failed = 0
     for src in demos:
         try:
-            ingest_file(src, engine, cfg, force=args.force)
+            ingest_file(src, engine, cfg, force=args.force, kind=args.kind)
         except ValueError as exc:  # a problem with this file that we can explain
             failed += 1
             print(f"FAILED {src.name}: {exc}")

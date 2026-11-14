@@ -215,6 +215,19 @@ def test_full_pipeline_on_public_demo():
         digest, _ = build_digest(engine, "public_test")
         assert [r.get("play") for r in digest["rounds"]] == [
             "slow B", "slow A", "default", None, None, "split A", "slow A", "split B", None]
+
+        # ---- Phase 7: the same demo treated as a pro demo gives two cards --------
+        from sqlalchemy import text as sql_text
+        from cs2review.playbook import build_playbook
+        with engine.begin() as conn:
+            conn.execute(sql_text("UPDATE matches SET source_kind = 'pro', us_team = NULL"))
+        cfg.playbook_status_path = Path(tmp) / "status.json"
+        cards = build_playbook(engine, cfg).sort_values("site")
+        assert list(cards["title"]) == ["A split: utility on Catwalk, SnipersNest", "B split: utility on Catwalk, SnipersNest"]
+        assert list(cards["seen"]) == [1, 1] and set(cards["source_kind"]) == {"pro"}
+        steps = json.loads(cards.iloc[0]["card"])["steps"]
+        assert [s["do"] for s in steps] == ["molotov", "molotov", "enter", "enter", "enter", "plant"]
+        assert steps[0]["lineup"].startswith("setpos ") and json.loads(cards.iloc[0]["card"])["examples"][0]["round"] == 6
         engine.dispose()
 
 

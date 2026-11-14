@@ -5,6 +5,7 @@
     python -m cs2review.plays review --map de_mirage   # correct unclear labels by hand (for the IGL)
     python -m cs2review.plays coverage --map de_mirage # share of our T rounds with a label
     python -m cs2review.plays show MATCH_ID ROUND      # the features behind one round's labels
+    python -m cs2review.plays status pb_1a2b3c4d trying   # a playbook card's status (Phase 9)
 
 This is the least certain part of the project, so it is rule-based,
 measurable and correctable. It works with zones from maps/<map>.toml.
@@ -194,6 +195,31 @@ def label_t(f: dict, zones: MapZones, rules: PlayRules) -> tuple[str, str | None
     if no_hit_until >= rules.slow_no_hit_before_s:
         return "slow", (target or {}).get("site")
     return "unknown", (target or {}).get("site")
+
+
+def play_wave(f: dict, label: str, site: str | None, zones: MapZones, rules: PlayRules) -> dict | None:
+    """The utility wave behind an execute, fake or split label (None if there is none).
+
+    Uses the same tests as label_t, so the playbook (Phase 7) can find which
+    smokes and molotovs made the play.
+    """
+    zone_to_site = {zones.site_zone(s): s for s in zones.sites}
+    heavy = [w for w in f.get("waves", []) if w["smokes"] + w["molotovs"] >= rules.execute_min_utility]
+    hit, plant = f.get("site_hit"), f.get("plant")
+    target = hit or plant
+    if label == "execute" and hit:
+        for w in heavy:
+            if zone_to_site.get(w["zone"]) == site and w["t"] <= hit["t"] <= w["end"] + rules.execute_hit_within_s:
+                return w
+    if label == "fake" and target:
+        for w in heavy:
+            other = zone_to_site.get(w["zone"])
+            if other and other != target["site"] and w["t"] <= target["t"]:
+                return w
+    if label == "split" and hit:
+        before = [w for w in heavy if w["t"] <= hit["t"]]
+        return before[-1] if before else None
+    return None
 
 
 def label_ct(f: dict, zones: MapZones, rules: PlayRules) -> tuple[str, str | None]:
@@ -443,6 +469,9 @@ def main(argv: list[str] | None = None) -> int:
     s = sub.add_parser("show", help="features of one round")
     s.add_argument("match_id")
     s.add_argument("round", type=int)
+    st = sub.add_parser("status", help="set a playbook card's status (same as python -m cs2review.playbook status)")
+    st.add_argument("id")
+    st.add_argument("status")
     args = ap.parse_args(argv)
 
     if hasattr(sys.stdout, "reconfigure"):
@@ -483,6 +512,15 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if args.command == "review":
         review(engine, cfg, args.map, args.below)
+        return 0
+    if args.command == "status":
+        from .playbook import set_status
+        try:
+            set_status(engine, cfg, args.id, args.status)
+        except ValueError as exc:
+            print(exc)
+            return 1
+        print(f"{args.id} is now '{args.status}'.")
         return 0
     if args.command == "show":
         with engine.connect() as conn:

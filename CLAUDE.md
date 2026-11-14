@@ -10,9 +10,9 @@ A post-match review tool for one five-player CS2 team on FACEIT. It parses
 demo files into SQLite, computes team metrics, and uses an LLM to write
 reports and suggest plays. Phases 1 (demo -> SQLite + self-check), 2 (team
 metrics and round flags) and 3 (round summaries and match digest) are done.
-Phases 4 (LLM match report), 5 (trends and question agent) and 6 (play
-detection) are built and wait for the owner's API key, webhook, real matches
-and zone review. Phase 1.5 waits for
+Phases 4 (LLM match report), 5 (trends and question agent), 6 (play
+detection) and 7 (playbook) are built and wait for the owner's API key,
+webhook, real matches, pro demos and zone review. Phase 1.5 waits for
 the owner's FACEIT demos.
 
 ## Hard rules
@@ -41,6 +41,8 @@ python -m cs2review.ask "question"      # question agent (needs ANTHROPIC_API_KE
 python -m cs2review.zones               # check / draft maps/<map>.toml zone files
 python -m cs2review.mapview de_mirage   # PNG to review a zone file
 python -m cs2review.plays build|list|review|coverage|show   # play detection
+python -m cs2review.ingest --kind pro   # pro demos from pro_inbox/
+python -m cs2review.playbook build|list|show|status|beat-us  # play cards
 python tests/eval_ask.py                # agent evaluation (real model, ~1 cent)
 python -m cs2review.debug_rounds X.dem  # raw round events of one demo
 python tests/test_rounds.py             # unit tests (no demo needed)
@@ -49,6 +51,7 @@ python tests/test_summaries.py          # Phase 3 unit tests (no demo needed)
 python tests/test_report.py             # Phase 4 unit tests (fake model, no network)
 python tests/test_trends_ask.py         # Phase 5 unit tests (synthetic database)
 python tests/test_plays.py              # Phase 6 unit tests
+python tests/test_playbook.py           # Phase 7 unit tests
 python tests/test_integration.py        # end-to-end (needs tests/data/test_demo.dem)
 ```
 
@@ -72,7 +75,8 @@ git clone --depth 1 https://github.com/LaihoE/demoparser tmp_demoparser
 - Write simple code and explain CS2 terms in comments: the owner is a junior
   engineer who is new to CS2 analytics.
 - Demo files, the database and `config.toml` are git-ignored. Never commit
-  them. `data/manual_plays.json` holds the IGL's labels: never delete it.
+  them. `data/manual_plays.json` (the IGL's labels) and
+  `data/playbook_status.json` (card statuses) are user data: never delete them.
 - Ask the owner for the inputs listed in section 9 of `PLAN.md` instead of
   inventing them (Steam IDs, map pool, zone files, API keys).
 - Tests never call a real model. Use `FakeProvider` from `llm.py`.
@@ -101,6 +105,7 @@ cs2review/prompts/         prompt text files (never put prompts inside functions
 cs2review/zones.py         zone files per map (maps/<map>.toml)
 cs2review/mapview.py       CLI: map PNG coloured by zone
 cs2review/plays.py         CLI: play features and labels, manual review
+cs2review/playbook.py      CLI: play cards from opponents and pro demos
 maps/                      zone files (owner-reviewed; de_mirage is a draft)
 tests/fixtures.py          synthetic 3-match database for tests
 cs2review/debug_rounds.py  CLI: raw round events

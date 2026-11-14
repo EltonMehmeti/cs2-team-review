@@ -63,6 +63,10 @@ class Config:
     inbox_dir: Path = Path("inbox")
     # where unpacked .dem files are kept
     demos_dir: Path = Path("demos")
+    # pro demos you downloaded by hand (python -m cs2review.ingest --kind pro)
+    pro_inbox_dir: Path = Path("pro_inbox")
+    # statuses you give playbook cards (new/trying/adopted/dropped); kept outside the database
+    playbook_status_path: Path = Path("data/playbook_status.json")
     # the SQLite database file
     db_path: Path = Path("data/cs2review.sqlite")
     # names for buy types ([buy_types] in config.toml)
@@ -103,7 +107,7 @@ def load_config(path: str | Path = "config.toml") -> Config:
             setattr(cfg.llm, key, float(llm[key]))
     if "out_dir" in llm:
         cfg.llm.out_dir = Path(llm["out_dir"])
-    for key in ("maps_dir", "manual_labels_path"):
+    for key in ("maps_dir", "manual_labels_path", "pro_inbox_dir", "playbook_status_path"):
         if key in raw:
             setattr(cfg, key, Path(raw[key]))
     for key, value in raw.get("plays", {}).items():

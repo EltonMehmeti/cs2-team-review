@@ -105,6 +105,9 @@ knife round or a restart that was counted as a real round.
 | `python -m cs2review.mapview de_mirage` | picture of the map coloured by zone, to check `maps/de_mirage.toml` |
 | `python -m cs2review.plays list --map de_mirage` | which plays we ran (rush, execute, split, ...) and how they went |
 | `python -m cs2review.plays review --map de_mirage` | the in-game leader corrects unclear labels and names the plays |
+| `python -m cs2review.ingest --kind pro` | read pro demos you downloaded by hand into `pro_inbox/` |
+| `python -m cs2review.playbook build` then `list` / `show <id>` | play cards from opponents and pros, with lineups and demo examples |
+| `python -m cs2review.playbook beat-us` | teams that beat us, per map |
 | `python -m cs2review.debug_rounds X` | show the raw round events of a demo |
 
 ## Words used in the database

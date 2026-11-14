@@ -1,0 +1,20 @@
+# local settings and secrets
+config.toml
+.env
+
+# demo files and everything derived from them
+inbox/*
+demos/*
+data/*
+pro_inbox/*
+out/
+tests/data/
+!inbox/.gitkeep
+!demos/.gitkeep
+!data/.gitkeep
+
+# python
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/

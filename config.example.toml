@@ -1,0 +1,16 @@
+# Copy this file to config.toml and edit it.
+
+# steamID64 of each of your five players (17 digits, in quotes).
+# They mark your team in the database (players.is_us, matches.us_team).
+team_steam_ids = [
+  # "7656119xxxxxxxxxx",
+  # "7656119xxxxxxxxxx",
+  # "7656119xxxxxxxxxx",
+  # "7656119xxxxxxxxxx",
+  # "7656119xxxxxxxxxx",
+]
+
+# Folders and files (these are the defaults).
+inbox_dir = "inbox"                 # drop downloaded demos here
+demos_dir = "demos"                 # unpacked .dem files are kept here
+db_path = "data/cs2review.sqlite"   # the database

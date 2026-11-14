@@ -69,8 +69,12 @@ def _bool(frame: pd.DataFrame, columns) -> pd.DataFrame:
     return frame
 
 
-def compute_trends(engine: Engine, map_name: str | None = None, last: int | None = None) -> dict:
-    """All trend numbers as one dict (the trend digest). Rates follow the MIN_N rule."""
+def compute_trends(engine: Engine, map_name: str | None = None, last: int | None = None, cfg=None) -> dict:
+    """All trend numbers as one dict (the trend digest). Rates follow the MIN_N rule.
+
+    With cfg, each map also lists the playbook cards we are trying and how
+    often we ran them since (Phase 9).
+    """
     ids = pick_matches(engine, map_name, last)
     out: dict = {"filter": {"map": map_name or "all", "last": last, "matches": len(ids)}, "maps": {}}
     if not ids:
@@ -149,6 +153,9 @@ def compute_trends(engine: Engine, map_name: str | None = None, last: int | None
                 "teammates_blinded": int(g["teammates_blinded"].sum()),
             })
         block["players"] = sorted(table, key=lambda p: (-p["rounds"], p["name"]))
+        if cfg is not None:
+            from .suggest import feedback
+            block["trying"] = [{k: f[k] for k in ("id", "title", "status", "since", "runs")} for f in feedback(engine, cfg, map_)]
         out["maps"][map_] = block
     return out
 
@@ -202,6 +209,12 @@ def format_trends(trends: dict) -> str:
                          f"{rate_text(p['kast']):<22}{p['opening_kills']:>4}{p['opening_deaths']:>4}"
                          f"{p['trade_kills']:>5}{p['untraded_deaths']:>6}")
         lines.append("  (oK/oD = opening kills/deaths, trK = trade kills, untr = deaths nobody traded)")
+        if block.get("trying"):
+            lines.append("")
+            lines.append("  plays we are trying (from the playbook):")
+            for f in block["trying"]:
+                lines.append(f"    {f['title'][:40]:<40} {f['status']:<8} ran {f['runs']['n']}x since {f['since'] or '?'}, "
+                             f"won {rate_text(f['runs'])}")
         lines.append("")
     return "\n".join(lines)
 
@@ -225,7 +238,7 @@ def main(argv: list[str] | None = None) -> int:
     except SchemaMismatchError as exc:
         print(exc)
         return 1
-    trends = compute_trends(engine, args.map, args.last)
+    trends = compute_trends(engine, args.map, args.last, cfg=cfg)
     if args.json:
         print(json.dumps(trends, ensure_ascii=False, indent=2))
     else:

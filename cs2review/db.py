@@ -26,8 +26,8 @@ from . import places
 # Version 5 added the views our_rounds, our_player_rounds, our_kills and
 # reports.kind (Phase 5). Version 6 added round_plays (Phase 6). Version 7
 # added matches.source_kind and the playbook table (Phase 7). Version 8 added
-# llm_calls.searches (Phase 8).
-SCHEMA_VERSION = 8
+# llm_calls.searches (Phase 8). Version 9 added zone_areas (Phase 9).
+SCHEMA_VERSION = 9
 
 
 class SchemaMismatchError(RuntimeError):
@@ -421,6 +421,18 @@ class Playbook(Base):
     stale: Mapped[bool] = mapped_column(Boolean)  # last seen before the map's last update
     needs_review: Mapped[bool] = mapped_column(Boolean)
     card: Mapped[str] = mapped_column(Text)  # JSON: title, steps, examples, evidence, lineup_verified
+
+
+class ZoneArea(Base):
+    """A copy of the zone files (maps/<map>.toml) so SQL can ask about zones (Phase 9).
+
+    Refilled from the files before weakness tags run; edit the files, not this table.
+    """
+
+    __tablename__ = "zone_areas"
+    map: Mapped[str] = mapped_column(String, primary_key=True)
+    area: Mapped[str] = mapped_column(String, primary_key=True)
+    zone: Mapped[str] = mapped_column(String)
 
 
 class LLMCall(Base):

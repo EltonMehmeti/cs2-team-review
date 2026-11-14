@@ -121,8 +121,8 @@ class AnthropicProvider:
             raise LLMError("The anthropic package is missing. Run: pip install -r requirements.txt") from exc
         if not (os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("ANTHROPIC_AUTH_TOKEN")):
             raise LLMError(
-                "ANTHROPIC_API_KEY is not set. Put your key in that environment variable "
-                "(never in config.toml), or use --provider manual."
+                "ANTHROPIC_API_KEY is not set. Put your Claude API key in that environment variable "
+                "(never in config.toml). The report commands also work without a key: --provider manual."
             )
         self._anthropic = anthropic
         self.client = anthropic.Anthropic()

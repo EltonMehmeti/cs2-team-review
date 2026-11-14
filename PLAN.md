@@ -6,9 +6,9 @@ finds the team's recurring mistakes, tracks the plays the team runs, and
 suggests new plays with examples.
 
 This document is written for the agent (or person) who implements the rest.
-Phases 1 to 3 are built and tested; Phases 4 to 8 are built and wait for the
-owner's key, webhook, real matches, pro demos, zone review and checks.
-Phases 1.5 and 9 are specified below.
+Phases 1 to 3 are built and tested; Phases 4 to 9 are built and wait for the
+owner's key, webhook, real matches, pro demos, zone review and checks
+(see each phase's "What was built" note). Phase 1.5 is specified below.
 
 | Phase | What | Status |
 |---|---|---|
@@ -21,7 +21,7 @@ Phases 1.5 and 9 are specified below.
 | 6 | Play detection: which plays the team runs | Built and tested; needs zone review, 10 real matches and the IGL |
 | 7 | Playbook from opponents and pro demos, with lineups | Built and tested; needs 5 pro demos and a lineup test |
 | 8 | Web scout: recent plays from articles and videos | Built and tested with a fake model; needs a key for a real run |
-| 9 | Weekly suggestions and feedback loop | To do |
+| 9 | Weekly suggestions and feedback loop | Built and tested; needs real matches and cards |
 | 10 | Optional: web UI, automation | Later |
 
 Update this table as phases are finished.
@@ -130,6 +130,8 @@ cs2review/
   plays.py         Phase 6: CLI: play features, labels, manual review, coverage
   playbook.py      Phase 7: CLI: cards from opponents' and pro rounds, statuses, beat-us
   scout.py         Phase 8: CLI: web scout with Claude's web search tool, checked links
+  suggest.py       Phase 9: CLI: weakness tags, three plays to try, feedback
+  weakness_tags.toml  Phase 9: one SQL condition per weakness tag
   prompts/         prompt text files
 maps/
   de_mirage.toml   draft zones from this plan (reviewed = false)
@@ -144,6 +146,7 @@ tests/
   test_plays.py         Phase 6 unit tests, hand-made positions on Mirage zones
   test_playbook.py      Phase 7 unit tests
   test_scout.py         Phase 8 unit tests, fake search, no network
+  test_suggest.py       Phase 9 unit tests
   test_integration.py   end-to-end test on a public demo (skips if missing)
 ```
 
@@ -348,7 +351,8 @@ every table change.
 | `reports` | match or trend report (`kind`): model JSON, rendered Markdown, tokens, cost (Phase 4, 5) |
 | `our_rounds`, `our_player_rounds`, `our_kills` | views: only our team (Phase 5) |
 | `round_plays` | team per played round: play label, site, confidence, features JSON, name, rule/manual (Phase 6) |
-| `playbook` | play card: signature, seen/won, difficulty, status, stale, card JSON (Phase 7) |
+| `playbook` | play card: signature, seen/won, difficulty, status, stale, card JSON (Phase 7, web cards Phase 8) |
+| `zone_areas` | copy of the zone files for SQL (refilled before weakness tags run; Phase 9) |
 | `meta` | `schema_version` |
 
 ---
@@ -1066,6 +1070,38 @@ later of whether they worked.
 **Done when.** A weekly post is generated from real data; statuses can be
 changed; after the team runs a suggested play in 3 or more rounds, trends
 show its result.
+
+**What was built (Phase 9, 2026-11-14).** `python -m cs2review.suggest
+[--post] [--dry-run] [--feedback]`, `cs2review/weakness_tags.toml`, a
+"plays we are trying" section in trends. 7 unit tests on the synthetic
+database. Statuses can be changed (`plays status` / `playbook status`).
+Still open: a weekly post from real data and a suggested play run 3+ times
+by the team. Decisions:
+
+- Seven tags to start: a_hits_failing, b_hits_failing (execute/split/rush
+  on a site under 35%), openings_lost_mid (40%+ of our T opening deaths in
+  Mid), t_side_losing (T under 45%), retake_a_weak, retake_b_weak (under
+  35%), force_buys_losing (semi buys under 25%). All need n >= 8. Each
+  returns `map, n, rate`. `zone_areas` (schema version 9) is refilled
+  from the zone files before they run, so SQL can ask about zones. Tags
+  are a starting point for the owner to tune.
+- Score = fit (3 on the tag's site, 1.8 on the side only) + evidence
+  (2 x won / seen when seen >= 3) + ease (1 - difficulty / 10) + freshness
+  (1 within 30 days, 0.5 within 90, 0.2 older, 0.3 unknown). Skipped:
+  stale, dropped, trying, adopted, and unreviewed web cards.
+- When no tag has enough data, the best-evidenced cards on our maps are
+  suggested, and the post says so. The suggestions are rules, not AI, so
+  they cost nothing; the post is stored in `reports` (`kind =
+  'suggestions'`) and new cards become `suggested`.
+- Statuses now store the date they were set
+  (`{"status": "trying", "since": "2026-11-14"}` in
+  `data/playbook_status.json`; old plain strings still load). Feedback
+  counts our rounds since that date that match the card's signature (our
+  own execute/split/fake rounds), or that the IGL named after the card
+  (its id or title) in `plays review`, on the card's map. A web card can
+  only be matched by name.
+- CT cards do not exist yet (the playbook holds T plays), so CT tags such
+  as retake_b_weak find no card today.
 
 ### Phase 10: optional extras
 

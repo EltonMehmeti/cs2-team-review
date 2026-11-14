@@ -84,15 +84,28 @@ def card_id(signature: str) -> str:
     return "pb_" + hashlib.sha1(signature.encode("utf-8")).hexdigest()[:8]
 
 
-def load_statuses(path) -> dict[str, str]:
+def _status_file(path) -> dict[str, dict]:
+    """{"pb_...": {"status": "trying", "since": "2026-11-14"}} (a plain string is read as a status)."""
     path = Path(path)
-    return json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+    raw = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+    return {k: (v if isinstance(v, dict) else {"status": v, "since": None}) for k, v in raw.items()}
 
 
-def save_statuses(path, statuses: dict[str, str]) -> None:
+def load_statuses(path) -> dict[str, str]:
+    return {k: v["status"] for k, v in _status_file(path).items()}
+
+
+def status_since(path) -> dict[str, str | None]:
+    """The date each card got its current status (Phase 9 counts our runs from then on)."""
+    return {k: v.get("since") for k, v in _status_file(path).items()}
+
+
+def save_status(path, card: str, status: str, since: str) -> None:
+    entries = _status_file(path)
+    entries[card] = {"status": status, "since": since}
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(statuses, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    path.write_text(json.dumps(entries, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
 # --------------------------------------------------------------------------
@@ -108,15 +121,23 @@ CANDIDATES_SQL = """
     JOIN matches m ON m.match_id = rp.match_id
     JOIN rounds r ON r.match_id = rp.match_id AND r.round = rp.round
     WHERE rp.side = 'T' AND rp.label IN ('execute', 'split', 'fake')
-      AND (m.source_kind = 'pro' OR (m.us_team IS NOT NULL AND rp.team != m.us_team))
+      AND {whose}
     ORDER BY m.file_time, rp.match_id, rp.round
 """
+WHOSE = {
+    "others": "(m.source_kind = 'pro' OR (m.us_team IS NOT NULL AND rp.team != m.us_team))",
+    "us": "(m.source_kind = 'own' AND rp.team = m.us_team)",
+}
 
 
-def candidate_rounds(engine: Engine, cfg: Config) -> pd.DataFrame:
-    """Every candidate round with its signature and the grenades of its wave."""
+def candidate_rounds(engine: Engine, cfg: Config, whose: str = "others") -> pd.DataFrame:
+    """Every candidate round with its signature and the grenades of its wave.
+
+    whose = "others": opponents in our matches and both teams in pro demos (the playbook);
+    whose = "us": our own rounds (Phase 9 checks whether we ran a suggested play).
+    """
     with engine.connect() as conn:
-        rows = pd.read_sql(text(CANDIDATES_SQL), conn)
+        rows = pd.read_sql(text(CANDIDATES_SQL.replace("{whose}", WHOSE[whose])), conn)
         grenades = pd.read_sql(text(
             "SELECT * FROM grenades WHERE thrower_side = 'T' AND type IN ('smoke', 'molotov')"), conn)
     if rows.empty:
@@ -258,16 +279,14 @@ def build_playbook(engine: Engine, cfg: Config) -> pd.DataFrame:
     return table
 
 
-def set_status(engine: Engine, cfg: Config, card: str, status: str) -> None:
+def set_status(engine: Engine, cfg: Config, card: str, status: str, today: str | None = None) -> None:
     if status not in STATUSES:
         raise ValueError(f"Unknown status '{status}'. Use one of: {', '.join(STATUSES)}.")
     with engine.begin() as conn:
         n = conn.execute(text("UPDATE playbook SET status = :s WHERE id = :i"), {"s": status, "i": card}).rowcount
     if not n:
         raise ValueError(f"Unknown card id '{card}'. See python -m cs2review.playbook list.")
-    statuses = load_statuses(cfg.playbook_status_path)
-    statuses[card] = status
-    save_statuses(cfg.playbook_status_path, statuses)
+    save_status(cfg.playbook_status_path, card, status, today or datetime.now().date().isoformat())
 
 
 def teams_that_beat_us(engine: Engine) -> pd.DataFrame:

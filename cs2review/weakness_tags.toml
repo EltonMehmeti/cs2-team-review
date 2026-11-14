@@ -1,0 +1,91 @@
+# Weakness tags (Phase 9). Each tag is one SQL query over our own rounds.
+# It returns one row per map where the weakness shows, with columns:
+#   map   the map
+#   n     how many rounds (or deaths) the rate is based on (always >= 8)
+#   rate  the percentage that triggered the tag
+# side / site say which playbook cards can help: cards on the same map and
+# side, and on the same site when a site is given.
+# Views: our_rounds, our_kills, our_player_rounds. zone_areas(map, zone,
+# area) is filled from maps/<map>.toml before the queries run.
+
+[a_hits_failing]
+description = "Our executes, splits and rushes on A win too rarely"
+side = "T"
+site = "A"
+sql = """
+SELECT m.map, COUNT(*) AS n, ROUND(100.0 * SUM(tr.won) / COUNT(*)) AS rate
+FROM round_plays rp
+JOIN matches m ON m.match_id = rp.match_id AND rp.team = m.us_team
+JOIN team_rounds tr ON tr.match_id = rp.match_id AND tr.round = rp.round AND tr.team = rp.team
+WHERE rp.side = 'T' AND rp.site = 'A' AND rp.label IN ('execute', 'split', 'rush')
+GROUP BY m.map
+HAVING COUNT(*) >= 8 AND 1.0 * SUM(tr.won) / COUNT(*) < 0.35
+"""
+
+[b_hits_failing]
+description = "Our executes, splits and rushes on B win too rarely"
+side = "T"
+site = "B"
+sql = """
+SELECT m.map, COUNT(*) AS n, ROUND(100.0 * SUM(tr.won) / COUNT(*)) AS rate
+FROM round_plays rp
+JOIN matches m ON m.match_id = rp.match_id AND rp.team = m.us_team
+JOIN team_rounds tr ON tr.match_id = rp.match_id AND tr.round = rp.round AND tr.team = rp.team
+WHERE rp.side = 'T' AND rp.site = 'B' AND rp.label IN ('execute', 'split', 'rush')
+GROUP BY m.map
+HAVING COUNT(*) >= 8 AND 1.0 * SUM(tr.won) / COUNT(*) < 0.35
+"""
+
+[openings_lost_mid]
+description = "Most of our T-side opening deaths happen in Mid"
+side = "T"
+sql = """
+SELECT k.map, COUNT(*) AS n, ROUND(100.0 * SUM(za.zone = 'Mid') / COUNT(*)) AS rate
+FROM our_kills k
+LEFT JOIN zone_areas za ON za.map = k.map AND za.area = k.victim_place
+WHERE k.is_opening = 1 AND k.of_us = 1 AND k.victim_side = 'T'
+GROUP BY k.map
+HAVING COUNT(*) >= 8 AND 1.0 * SUM(za.zone = 'Mid') / COUNT(*) >= 0.40
+"""
+
+[t_side_losing]
+description = "We win too few T-side rounds"
+side = "T"
+sql = """
+SELECT map, COUNT(*) AS n, ROUND(100.0 * AVG(won)) AS rate
+FROM our_rounds WHERE side = 'T'
+GROUP BY map
+HAVING COUNT(*) >= 8 AND AVG(won) < 0.45
+"""
+
+[retake_a_weak]
+description = "We rarely win retakes on A"
+side = "CT"
+site = "A"
+sql = """
+SELECT map, COUNT(*) AS n, ROUND(100.0 * AVG(won)) AS rate
+FROM our_rounds WHERE side = 'CT' AND planted = 1 AND plant_site = 'A'
+GROUP BY map
+HAVING COUNT(*) >= 8 AND AVG(won) < 0.35
+"""
+
+[retake_b_weak]
+description = "We rarely win retakes on B"
+side = "CT"
+site = "B"
+sql = """
+SELECT map, COUNT(*) AS n, ROUND(100.0 * AVG(won)) AS rate
+FROM our_rounds WHERE side = 'CT' AND planted = 1 AND plant_site = 'B'
+GROUP BY map
+HAVING COUNT(*) >= 8 AND AVG(won) < 0.35
+"""
+
+[force_buys_losing]
+description = "Our semi buys (force buys) almost never win"
+side = "T"
+sql = """
+SELECT map, COUNT(*) AS n, ROUND(100.0 * AVG(won)) AS rate
+FROM our_rounds WHERE buy_type = 'semi'
+GROUP BY map
+HAVING COUNT(*) >= 8 AND AVG(won) < 0.25
+"""
